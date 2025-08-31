@@ -1,34 +1,63 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:uuid/uuid.dart';
 
 class FirestoreService {
-  final _db = FirebaseFirestore.instance;
+  final FirebaseFirestore _db = FirebaseFirestore.instance;
+  final Uuid _uuid = const Uuid();
 
-  Future<void> upsertUser(String uid, Map<String, dynamic> data) async {
+  Future<void> guardarUsuario({
+    required String uid,
+    required String nombre,
+    required String correo,
+    required String rol,
+    String? nivelEducativo,
+    String? discapacidad,
+    String? relacionFamiliar,
+    String? pais,
+    String? ciudad,
+    String? area,
+    String? institucion,
+  }) async {
+    final Map<String, dynamic> data = {
+      'uid': uid,
+      'nombre': nombre,
+      'correo': correo,
+      'rol': rol,
+      'estado': 'activo',
+      'ultimoAcceso': FieldValue.serverTimestamp(), // fecha de creación/primer acceso
+    };
+
+    if (rol == 'estudiante') {
+      final codigo = await _generarCodigoUnico();
+      data['nivelEducativo'] = (nivelEducativo ?? '').trim();
+      data['discapacidad']   = (discapacidad ?? '').trim();
+      data['estudiante'] = {'codigoVinculacion': codigo};
+    } else if (rol == 'tutor') {
+      data['tutor'] = {
+        'relacionFamiliar': (relacionFamiliar ?? '').trim(),
+      };
+    } else if (rol == 'docente') {
+      data['docente'] = {
+        'pais'       : (pais ?? '').trim(),
+        'ciudad'     : (ciudad ?? '').trim(),
+        'area'       : (area ?? '').trim(),
+        'institucion': (institucion ?? '').trim(),
+      };
+    }
+
     await _db.collection('usuarios').doc(uid).set(data, SetOptions(merge: true));
   }
 
-  Future<Map<String, dynamic>?> getUser(String uid) async {
-    final doc = await _db.collection('usuarios').doc(uid).get();
-    return doc.data();
-  }
-
-  Future<void> createTema(String nombre) =>
-      _db.collection('temas').doc(nombre).set({'nombre': nombre});
-
-  Future<List<Map<String, dynamic>>> getTemas() async {
-    final snap = await _db.collection('temas').get();
-    return snap.docs.map((d) => d.data()).toList();
-  }
-
-  // Sesiones (resumen)
-  Future<void> createSesion(String sesionId, Map<String, dynamic> data) async {
-    await _db.collection('sesiones').doc(sesionId).set(data);
-  }
-
-  Stream<QuerySnapshot<Map<String, dynamic>>> sesionesDe(String estudianteId) {
-    return _db.collection('sesiones')
-      .where('estudianteId', isEqualTo: estudianteId)
-      .orderBy('fecha', descending: true)
-      .snapshots();
+  Future<String> _generarCodigoUnico() async {
+    // 6 caracteres alfanuméricos, no repetidos en usuarios.estudiante.codigoVinculacion
+    while (true) {
+      final code = _uuid.v4().replaceAll('-', '').substring(0, 6).toUpperCase();
+      final snap = await _db
+          .collection('usuarios')
+          .where('estudiante.codigoVinculacion', isEqualTo: code)
+          .limit(1)
+          .get();
+      if (snap.docs.isEmpty) return code;
+    }
   }
 }

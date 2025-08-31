@@ -18,18 +18,15 @@ class HomeScreen extends StatelessWidget {
             if (snap.connectionState == ConnectionState.waiting) {
               return const CircularProgressIndicator();
             }
-            if (snap.hasError || !snap.hasData || !snap.data!.exists) {
-              return const Text('Error o usuario sin datos');
+            if (!snap.hasData || !snap.data!.exists) {
+              return const Text('Usuario sin datos.');
             }
             final data = snap.data!.data() as Map<String, dynamic>;
             final rol = (data['rol'] ?? '') as String;
             final nombre = (data['nombre'] ?? '') as String;
-
-            if (rol == 'estudiante') {
-              return EstudianteScreen(nombre: nombre);
-            } else {
-              return DocenteTutorScreen(nombre: nombre);
-            }
+            return (rol == 'estudiante')
+              ? EstudianteScreen(nombre: nombre)
+              : DocenteTutorScreen(nombre: nombre);
           },
         ),
       ),
