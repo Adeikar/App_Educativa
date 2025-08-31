@@ -1,0 +1,67 @@
+{
+  "project_info": {
+    "project_number": "76010994155",
+    "project_id": "mathlearningapp-e2d05",
+    "storage_bucket": "mathlearningapp-e2d05.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:76010994155:android:7cda184c5f03f8124c41ae",
+        "android_client_info": {
+          "package_name": "com.example.app_aprendizaje"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyD7H8Vine20qJgoWab2LAR17xMpwJtyX7s"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:76010994155:android:086f2496177dc7b04c41ae",
+        "android_client_info": {
+          "package_name": "com.example.mateq"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyD7H8Vine20qJgoWab2LAR17xMpwJtyX7s"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:76010994155:android:1ab610d581f1e21a4c41ae",
+        "android_client_info": {
+          "package_name": "com.example.proyectotio"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyD7H8Vine20qJgoWab2LAR17xMpwJtyX7s"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
