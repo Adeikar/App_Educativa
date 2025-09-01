@@ -1,9 +1,10 @@
-// ignore_for_file: use_build_context_synchronously
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-import '../../services/tema_service.dart';
-import 'temas_crud_screen.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+
+import 'tabs/docente_inicio_tab.dart';
+import 'tabs/docente_reportes_tab.dart';
+import 'tabs/docente_notificaciones_tab.dart';
+import 'tabs/docente_perfil_tab.dart';
 
 class DocenteTutorScreen extends StatefulWidget {
   final String? nombre;
@@ -13,143 +14,199 @@ class DocenteTutorScreen extends StatefulWidget {
   State<DocenteTutorScreen> createState() => _DocenteTutorScreenState();
 }
 
-class _DocenteTutorScreenState extends State<DocenteTutorScreen> {
-  bool _loading = true;
-  bool _isDocente = false;
-  String _nombre = 'Usuario';
+class _DocenteTutorScreenState extends State<DocenteTutorScreen>
+    with TickerProviderStateMixin {
+  int _index = 0;
+
+  // Para abrir Reportes desde Inicio con un alumno específico
+  String? _selectedStudentId;
+  String? _selectedStudentName;
+
+  // Animación suave al cambiar de tab
+  late final AnimationController _fadeCtrl =
+      AnimationController(vsync: this, duration: const Duration(milliseconds: 200));
+  late final Animation<double> _fade =
+      CurvedAnimation(parent: _fadeCtrl, curve: Curves.easeInOut);
+
+  void _openReportFor(String estudianteId, String estudianteNombre) {
+    setState(() {
+      _selectedStudentId = estudianteId;
+      _selectedStudentName = estudianteNombre;
+      _index = 1; // pestaña "Reportes"
+    });
+  }
 
   @override
-  void initState() {
-    super.initState();
-    _loadUser();
-  }
-
-  Future<void> _loadUser() async {
-    final uid = FirebaseAuth.instance.currentUser?.uid;
-    if (uid == null) {
-      setState(() {
-        _loading = false;
-        _isDocente = false;
-      });
-      return;
-    }
-
-    try {
-      final snap = await FirebaseFirestore.instance.collection('usuarios').doc(uid).get();
-      final data = snap.data() ?? {};
-      final rol = (data['rol'] ?? '').toString();
-      final nombre = widget.nombre ?? (data['nombre'] ?? 'Usuario').toString();
-
-      setState(() {
-        _nombre = nombre;
-        _isDocente = (rol == 'docente');
-        _loading = false;
-      });
-    } catch (_) {
-      setState(() {
-        _loading = false;
-        _isDocente = false;
-      });
-    }
-  }
-
-  Future<void> _seedTemasBasicos() async {
-    final service = TemaService();
-    final seeds = const [
-      {'nombre': 'suma', 'concepto': 'Combina cantidades. Ej: 2 + 3 = 5'},
-      {'nombre': 'resta', 'concepto': 'Quita una cantidad. Ej: 5 - 2 = 3'},
-      {'nombre': 'multiplicacion', 'concepto': 'Sumas repetidas. Ej: 3 × 4 = 12'},
-      {'nombre': 'conteo', 'concepto': 'Enumerar elementos para conocer la cantidad.'},
-    ];
-    try {
-      for (final t in seeds) {
-        await service.crearTema(nombre: t['nombre']!, concepto: t['concepto']!);
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Temas básicos sembrados')),
-      );
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error: $e')),
-      );
-    }
+  void dispose() {
+    _fadeCtrl.dispose();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_loading) {
-      return const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
-      );
-    }
+    final user = FirebaseAuth.instance.currentUser;
+    final display = widget.nombre ?? user?.displayName ?? 'Docente';
 
-    if (!_isDocente) {
-      return Scaffold(
-        appBar: AppBar(title: const Text('Panel')),
-        body: const Center(child: Text('No autorizado')),
-      );
-    }
+    final tabs = [
+      DocenteInicioTab(onOpenReport: _openReportFor),
+      DocenteReportesTab(
+        initialStudentId: _selectedStudentId,
+        initialStudentName: _selectedStudentName,
+        onClearSelection: () => setState(() {
+          _selectedStudentId = null;
+          _selectedStudentName = null;
+        }),
+      ),
+      const DocenteNotificacionesTab(),
+      const DocentePerfilTab(),
+    ];
+
+    _fadeCtrl
+      ..reset()
+      ..forward();
 
     return Scaffold(
-      appBar: AppBar(
-        title: Text('Panel del Docente — Hola, $_nombre'),
-        actions: [
-          IconButton(
-            tooltip: 'Gestionar Temas',
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const TemasCrudScreen()),
-              );
-            },
-            icon: const Icon(Icons.menu_book),
+      backgroundColor:
+          ColorScheme.fromSeed(seedColor: Colors.blue).surfaceContainerLowest,
+      appBar: _HeaderAppBar(nombre: display),
+      body: SafeArea(
+        child: Semantics(
+          label: 'Contenido de la pestaña ${_labelForIndex(_index)}',
+          child: FadeTransition(
+            opacity: _fade,
+            child: IndexedStack(index: _index, children: tabs),
+          ),
+        ),
+      ),
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: _index,
+        onDestinationSelected: (i) => setState(() => _index = i),
+        labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
+        destinations: const [
+          NavigationDestination(
+            icon: Icon(Icons.people_outline),
+            selectedIcon: Icon(Icons.people),
+            label: 'Inicio',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.assessment_outlined),
+            selectedIcon: Icon(Icons.assessment),
+            label: 'Reportes',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.notifications_outlined),
+            selectedIcon: Icon(Icons.notifications),
+            label: 'Avisos',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.person_outline),
+            selectedIcon: Icon(Icons.person),
+            label: 'Perfil',
           ),
         ],
       ),
-      body: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 520),
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Text(
-                  'Herramientas del docente',
-                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 16),
-                SizedBox(
-                  width: double.infinity,
-                  child: FilledButton.icon(
-                    icon: const Icon(Icons.menu_book),
-                    label: const Text('Gestionar Temas'),
-                    onPressed: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(builder: (_) => const TemasCrudScreen()),
-                      );
-                    },
-                  ),
-                ),
-                const SizedBox(height: 12),
-                // OPCIONAL: botón de semilla para crear los 4 temas rápido
-                SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton.icon(
-                    icon: const Icon(Icons.auto_fix_high),
-                    label: const Text('Sembrar temas básicos'),
-                    onPressed: _seedTemasBasicos,
-                  ),
-                ),
-                const SizedBox(height: 24),
-                const Text(
-                  'Aquí luego puedes agregar: lista de estudiantes, reportes, notificaciones, etc.',
-                  textAlign: TextAlign.center,
-                ),
-              ],
-            ),
+
+      
+    );
+  }
+
+
+  String _labelForIndex(int i) => switch (i) {
+        0 => 'Inicio',
+        1 => 'Reportes',
+        2 => 'Avisos',
+        _ => 'Perfil',
+      };
+}
+
+/// AppBar con saludo y ayuda (sin botón extra de “Gestionar temas” para evitar duplicar acciones).
+class _HeaderAppBar extends StatelessWidget implements PreferredSizeWidget {
+  final String nombre;
+  const _HeaderAppBar({required this.nombre});
+
+  @override
+  Size get preferredSize => const Size.fromHeight(96);
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+
+    return AppBar(
+      toolbarHeight: 96,
+      elevation: 0,
+      automaticallyImplyLeading: false,
+      flexibleSpace: Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [cs.primaryContainer, cs.primary.withOpacity(0.90)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
           ),
+        ),
+      ),
+      titleSpacing: 0,
+      title: Padding(
+        padding: const EdgeInsets.only(right: 12),
+        child: Row(
+          children: [
+            const SizedBox(width: 12),
+            CircleAvatar(
+              radius: 26,
+              backgroundColor: cs.onPrimary.withOpacity(0.15),
+              child: Icon(Icons.school, color: cs.onPrimary),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Semantics(
+                    header: true,
+                    child: Text(
+                      'Panel del Docente',
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                            color: cs.onPrimary,
+                            fontWeight: FontWeight.w700,
+                          ),
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    'Hola, $nombre',
+                    style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                          color: cs.onPrimary.withOpacity(0.95),
+                        ),
+                  ),
+                ],
+              ),
+            ),
+            IconButton(
+              tooltip: 'Ayuda',
+              onPressed: () {
+                showDialog(
+                  context: context,
+                  builder: (_) => AlertDialog(
+                    title: const Text('Consejos rápidos'),
+                    content: const Text(
+                      '• “Inicio”: vincula y gestiona alumnos.\n'
+                      '• “Reportes”: busca un estudiante, vista previa y PDF.\n'
+                      '• “Avisos”: envía y revisa mensajes.\n'
+                      '• “Perfil”: datos del docente y foto.\n'
+                      '• Usa el botón “Acciones” para Vincular o Gestionar temas.',
+                    ),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(context),
+                        child: const Text('Entendido'),
+                      ),
+                    ],
+                  ),
+                );
+              },
+              icon: Icon(Icons.help_outline, color: cs.onPrimary),
+            ),
+          ],
         ),
       ),
     );

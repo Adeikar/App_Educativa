@@ -2,6 +2,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+
 import '../../models/tema.dart';
 import '../../services/tema_service.dart';
 
@@ -49,7 +50,7 @@ class _TemasCrudScreenState extends State<TemasCrudScreen> {
     await showDialog(
       context: context,
       builder: (_) => AlertDialog(
-        title: Text(editMode ? 'Editar Tema' : 'Nuevo Tema'),
+        title: Text(editMode ? 'Editar tema' : 'Nuevo tema'),
         content: Form(
           key: form,
           child: ConstrainedBox(
@@ -61,12 +62,12 @@ class _TemasCrudScreenState extends State<TemasCrudScreen> {
                     controller: nombreCtrl,
                     decoration: const InputDecoration(
                       labelText: 'Nombre (suma, resta, multiplicacion, conteo)',
-                      prefixIcon: Icon(Icons.book),
+                      prefixIcon: Icon(Icons.menu_book),
                     ),
                     validator: (v) {
                       if (v == null || v.trim().isEmpty) return 'Nombre requerido';
                       if (!RegExp(r'^[a-z_áéíóúñ]+$', caseSensitive: false).hasMatch(v.trim())) {
-                        return 'Solo letras y guiones bajos';
+                        return 'Solo letras (sin espacios)';
                       }
                       return null;
                     },
@@ -97,10 +98,8 @@ class _TemasCrudScreenState extends State<TemasCrudScreen> {
 
               try {
                 if (editMode) {
-                  // si cambias el "nombre", preferimos sobrescribir por idDoc (antiguo)
-                  await _service.actualizarTema(tema.id, nombre: nombre, concepto: concepto);
+                  await _service.actualizarTema(tema!.id, nombre: nombre, concepto: concepto);
                 } else {
-                  // crear con doc(nombre)
                   await _service.crearTema(nombre: nombre, concepto: concepto);
                 }
                 Navigator.pop(context);
@@ -147,71 +146,189 @@ class _TemasCrudScreenState extends State<TemasCrudScreen> {
 
   @override
   Widget build(BuildContext context) {
-    if (_loading) return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    if (_loading) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
     if (!_allowed) {
       return Scaffold(
-        appBar: AppBar(title: const Text('Temas')),
+        appBar: const _TemasHeaderAppBar(),
         body: const Center(child: Text('No autorizado')),
       );
     }
 
+    final cs = Theme.of(context).colorScheme;
+
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Gestionar Temas (Docente)'),
-        actions: [
-          IconButton(
-            tooltip: 'Nuevo tema',
-            onPressed: () => _openNewOrEditDialog(),
-            icon: const Icon(Icons.add),
-          ),
-        ],
-      ),
-      body: StreamBuilder<List<Tema>>(
-        stream: _service.streamTemas(),
-        builder: (context, snap) {
-          if (snap.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          final temas = snap.data ?? [];
-          if (temas.isEmpty) {
-            return const Center(child: Text('Aún no hay temas'));
-          }
-          return ListView.separated(
-            padding: const EdgeInsets.all(16),
-            itemCount: temas.length,
-            separatorBuilder: (_, __) => const SizedBox(height: 8),
-            itemBuilder: (_, i) {
-              final t = temas[i];
-              return Card(
-                child: ListTile(
-                  leading: const Icon(Icons.menu_book),
-                  title: Text(t.nombre),
-                  subtitle: Text(t.concepto),
-                  trailing: Wrap(
-                    spacing: 8,
+      backgroundColor: ColorScheme.fromSeed(seedColor: Colors.blue).surfaceContainerLowest,
+      appBar: const _TemasHeaderAppBar(),
+      body: SafeArea(
+        child: StreamBuilder<List<Tema>>(
+          stream: _service.streamTemas(),
+          builder: (context, snap) {
+            if (snap.connectionState == ConnectionState.waiting) {
+              return const Center(child: CircularProgressIndicator());
+            }
+            final temas = snap.data ?? [];
+            if (temas.isEmpty) {
+              return Padding(
+                padding: const EdgeInsets.all(24),
+                child: Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
                     children: [
-                      IconButton(
-                        tooltip: 'Editar',
-                        icon: const Icon(Icons.edit),
-                        onPressed: () => _openNewOrEditDialog(tema: t),
+                      Icon(Icons.menu_book_outlined, size: 64, color: cs.primary),
+                      const SizedBox(height: 12),
+                      const Text(
+                        'Aún no hay temas',
+                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
                       ),
-                      IconButton(
-                        tooltip: 'Eliminar',
-                        icon: const Icon(Icons.delete, color: Colors.red),
-                        onPressed: () => _delete(t),
+                      const SizedBox(height: 6),
+                      const Text(
+                        'Crea tus primeros contenidos desde el botón “Nuevo tema”.',
+                        textAlign: TextAlign.center,
                       ),
                     ],
                   ),
                 ),
               );
-            },
-          );
-        },
+            }
+
+            return ListView.separated(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 100),
+              itemCount: temas.length,
+              separatorBuilder: (_, __) => const SizedBox(height: 8),
+              itemBuilder: (_, i) {
+                final t = temas[i];
+                return Card(
+                  elevation: 1.5,
+                  child: ListTile(
+                    leading: CircleAvatar(
+                      backgroundColor: cs.primaryContainer,
+                      child: Icon(Icons.menu_book, color: cs.onPrimaryContainer),
+                    ),
+                    title: Text(
+                      t.nombre,
+                      style: const TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                    subtitle: Text(
+                      t.concepto,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    trailing: Wrap(
+                      spacing: 8,
+                      children: [
+                        IconButton(
+                          tooltip: 'Editar',
+                          icon: const Icon(Icons.edit),
+                          onPressed: () => _openNewOrEditDialog(tema: t),
+                        ),
+                        IconButton(
+                          tooltip: 'Eliminar',
+                          icon: const Icon(Icons.delete, color: Colors.red),
+                          onPressed: () => _delete(t),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            );
+          },
+        ),
       ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () => _openNewOrEditDialog(),
         icon: const Icon(Icons.add),
-        label: const Text('Nuevo Tema'),
+        label: const Text('Nuevo tema'),
+      ),
+    );
+  }
+}
+
+/// AppBar con el mismo look & feel del panel del docente
+class _TemasHeaderAppBar extends StatelessWidget implements PreferredSizeWidget {
+  const _TemasHeaderAppBar();
+
+  @override
+  Size get preferredSize => const Size.fromHeight(96);
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+
+    return AppBar(
+      toolbarHeight: 96,
+      elevation: 0,
+      automaticallyImplyLeading: true,
+      flexibleSpace: Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [cs.primaryContainer, cs.primary.withOpacity(0.90)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+        ),
+      ),
+      titleSpacing: 0,
+      title: Padding(
+        padding: const EdgeInsets.only(right: 12),
+        child: Row(
+          children: [
+            const SizedBox(width: 12),
+            CircleAvatar(
+              radius: 26,
+              backgroundColor: cs.onPrimary.withOpacity(0.15),
+              child: Icon(Icons.menu_book, color: cs.onPrimary),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Semantics(
+                    header: true,
+                    child: Text(
+                      'Gestionar Temas',
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                            color: cs.onPrimary,
+                            fontWeight: FontWeight.w700,
+                          ),
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    'Crea, edita y elimina contenidos',
+                    style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                          color: cs.onPrimary.withOpacity(0.95),
+                        ),
+                  ),
+                ],
+              ),
+            ),
+            IconButton(
+              tooltip: 'Ayuda',
+              onPressed: () {
+                showDialog(
+                  context: context,
+                  builder: (_) => AlertDialog(
+                    title: const Text('Consejos rápidos'),
+                    content: const Text(
+                      '• Usa “Nuevo tema” para crear contenidos (suma, resta, etc.).\n'
+                      '• Cada tema tiene un “concepto” breve para los estudiantes.\n'
+                      '• Puedes editar o eliminar desde los íconos del listado.',
+                    ),
+                    actions: [
+                      TextButton(onPressed: () => Navigator.pop(context), child: const Text('Entendido')),
+                    ],
+                  ),
+                );
+              },
+              icon: Icon(Icons.help_outline, color: cs.onPrimary),
+            ),
+          ],
+        ),
       ),
     );
   }
