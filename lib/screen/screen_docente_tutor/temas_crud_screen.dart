@@ -98,7 +98,7 @@ class _TemasCrudScreenState extends State<TemasCrudScreen> {
               try {
                 if (editMode) {
                   // si cambias el "nombre", preferimos sobrescribir por idDoc (antiguo)
-                  await _service.actualizarTema(tema!.id, nombre: nombre, concepto: concepto);
+                  await _service.actualizarTema(tema.id, nombre: nombre, concepto: concepto);
                 } else {
                   // crear con doc(nombre)
                   await _service.crearTema(nombre: nombre, concepto: concepto);
