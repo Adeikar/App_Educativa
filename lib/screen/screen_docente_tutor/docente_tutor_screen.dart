@@ -1,10 +1,14 @@
+// Pantalla principal Docente/Tutor/Admin con pestañas y “Solicitudes” visible solo para admin/director.
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'dart:async';
 
 import 'tabs/docente_inicio_tab.dart';
 import 'tabs/docente_reportes_tab.dart';
 import 'tabs/docente_notificaciones_tab.dart';
 import 'tabs/docente_perfil_tab.dart';
+import 'tabs/docentes_solicitudes_tab.dart';
 
 class DocenteTutorScreen extends StatefulWidget {
   final String? nombre;
@@ -17,16 +21,47 @@ class DocenteTutorScreen extends StatefulWidget {
 class _DocenteTutorScreenState extends State<DocenteTutorScreen>
     with TickerProviderStateMixin {
   int _index = 0;
-
-  // Para abrir Reportes desde Inicio con un alumno específico
   String? _selectedStudentId;
   String? _selectedStudentName;
 
-  // Animación suave al cambiar de tab
+  // animación
   late final AnimationController _fadeCtrl =
       AnimationController(vsync: this, duration: const Duration(milliseconds: 200));
   late final Animation<double> _fade =
       CurvedAnimation(parent: _fadeCtrl, curve: Curves.easeInOut);
+
+  // flag admin/director
+  bool _isAdmin = false;
+
+  // suscripción a cambios del documento de usuario (para actualizar flag en vivo)
+  Stream<DocumentSnapshot<Map<String, dynamic>>>? _userStream;
+  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _sub;
+
+  @override
+  void initState() {
+    super.initState();
+    _watchRole();
+  }
+
+  void _watchRole() {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return;
+    _userStream = FirebaseFirestore.instance.collection('usuarios').doc(uid).snapshots();
+    _sub = _userStream!.listen((doc) {
+      final rol = (doc.data()?['rol'] ?? '').toString().trim().toLowerCase();
+      final adminNow = (rol == 'admin' || rol == 'director');
+      if (_isAdmin != adminNow && mounted) {
+        setState(() => _isAdmin = adminNow);
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _fadeCtrl.dispose();
+    _sub?.cancel();
+    super.dispose();
+  }
 
   void _openReportFor(String estudianteId, String estudianteNombre) {
     setState(() {
@@ -37,17 +72,11 @@ class _DocenteTutorScreenState extends State<DocenteTutorScreen>
   }
 
   @override
-  void dispose() {
-    _fadeCtrl.dispose();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
     final user = FirebaseAuth.instance.currentUser;
-    final display = widget.nombre ?? user?.displayName ?? 'Docente';
+    final display = widget.nombre ?? user?.displayName ?? 'Usuario';
 
-    final tabs = [
+    final tabs = <Widget>[
       DocenteInicioTab(onOpenReport: _openReportFor),
       DocenteReportesTab(
         initialStudentId: _selectedStudentId,
@@ -58,20 +87,49 @@ class _DocenteTutorScreenState extends State<DocenteTutorScreen>
         }),
       ),
       const DocenteNotificacionesTab(),
+      if (_isAdmin) const DocentesSolicitudesTab(), // SOLO admin/director
       const DocentePerfilTab(),
     ];
 
-    _fadeCtrl
-      ..reset()
-      ..forward();
+    final destinations = <NavigationDestination>[
+      const NavigationDestination(
+        icon: Icon(Icons.people_outline),
+        selectedIcon: Icon(Icons.people),
+        label: 'Inicio',
+      ),
+      const NavigationDestination(
+        icon: Icon(Icons.assessment_outlined),
+        selectedIcon: Icon(Icons.assessment),
+        label: 'Reportes',
+      ),
+      const NavigationDestination(
+        icon: Icon(Icons.notifications_outlined),
+        selectedIcon: Icon(Icons.notifications),
+        label: 'Avisos',
+      ),
+      if (_isAdmin)
+        const NavigationDestination(
+          icon: Icon(Icons.assignment_turned_in_outlined),
+          selectedIcon: Icon(Icons.assignment_turned_in),
+          label: 'Solicitudes',
+        ),
+      const NavigationDestination(
+        icon: Icon(Icons.person_outline),
+        selectedIcon: Icon(Icons.person),
+        label: 'Perfil',
+      ),
+    ];
+
+    if (_index >= tabs.length) _index = tabs.length - 1;
+
+    _fadeCtrl..reset()..forward();
 
     return Scaffold(
-      backgroundColor:
-          ColorScheme.fromSeed(seedColor: Colors.blue).surfaceContainerLowest,
+      backgroundColor: ColorScheme.fromSeed(seedColor: Colors.blue).surfaceContainerLowest,
       appBar: _HeaderAppBar(nombre: display),
       body: SafeArea(
         child: Semantics(
-          label: 'Contenido de la pestaña ${_labelForIndex(_index)}',
+          label: 'Contenido de la pestaña ${_labelForIndex(_index, isAdmin: _isAdmin)}',
           child: FadeTransition(
             opacity: _fade,
             child: IndexedStack(index: _index, children: tabs),
@@ -82,44 +140,17 @@ class _DocenteTutorScreenState extends State<DocenteTutorScreen>
         selectedIndex: _index,
         onDestinationSelected: (i) => setState(() => _index = i),
         labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.people_outline),
-            selectedIcon: Icon(Icons.people),
-            label: 'Inicio',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.assessment_outlined),
-            selectedIcon: Icon(Icons.assessment),
-            label: 'Reportes',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.notifications_outlined),
-            selectedIcon: Icon(Icons.notifications),
-            label: 'Avisos',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.person_outline),
-            selectedIcon: Icon(Icons.person),
-            label: 'Perfil',
-          ),
-        ],
+        destinations: destinations,
       ),
-
-      
     );
   }
 
-
-  String _labelForIndex(int i) => switch (i) {
-        0 => 'Inicio',
-        1 => 'Reportes',
-        2 => 'Avisos',
-        _ => 'Perfil',
-      };
+  String _labelForIndex(int i, {required bool isAdmin}) {
+    final labels = <String>['Inicio', 'Reportes', 'Avisos', if (isAdmin) 'Solicitudes', 'Perfil'];
+    return (i >= 0 && i < labels.length) ? labels[i] : 'Sección';
+  }
 }
 
-/// AppBar con saludo y ayuda (sin botón extra de “Gestionar temas” para evitar duplicar acciones).
 class _HeaderAppBar extends StatelessWidget implements PreferredSizeWidget {
   final String nombre;
   const _HeaderAppBar({required this.nombre});
@@ -164,7 +195,7 @@ class _HeaderAppBar extends StatelessWidget implements PreferredSizeWidget {
                   Semantics(
                     header: true,
                     child: Text(
-                      'Panel del Docente',
+                      'Panel',
                       style: Theme.of(context).textTheme.titleLarge?.copyWith(
                             color: cs.onPrimary,
                             fontWeight: FontWeight.w700,
@@ -189,11 +220,11 @@ class _HeaderAppBar extends StatelessWidget implements PreferredSizeWidget {
                   builder: (_) => AlertDialog(
                     title: const Text('Consejos rápidos'),
                     content: const Text(
-                      '• “Inicio”: vincula y gestiona alumnos.\n'
-                      '• “Reportes”: busca un estudiante, vista previa y PDF.\n'
-                      '• “Avisos”: envía y revisa mensajes.\n'
-                      '• “Perfil”: datos del docente y foto.\n'
-                      '• Usa el botón “Acciones” para Vincular o Gestionar temas.',
+                      '• Inicio: vincula y gestiona alumnos.\n'
+                      '• Reportes: busca un estudiante, vista previa y PDF.\n'
+                      '• Avisos: avisos generales.\n'
+                      '• Solicitudes (solo admin): aprobar/rechazar docentes.\n'
+                      '• Perfil: datos y foto.',
                     ),
                     actions: [
                       TextButton(

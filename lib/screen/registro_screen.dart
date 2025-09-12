@@ -1,4 +1,4 @@
-// ignore_for_file: use_build_context_synchronously
+// RegistroScreen: guarda como 'docente_solicitado' y crea solicitud para admins.
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -6,31 +6,29 @@ import '../services/firestore_service.dart';
 
 class RegistroScreen extends StatefulWidget {
   const RegistroScreen({super.key});
-
   @override
   State<RegistroScreen> createState() => _RegistroScreenState();
 }
 
 class _RegistroScreenState extends State<RegistroScreen> {
+  // Form y controladores
   final _formKey = GlobalKey<FormState>();
   final _nombreCtrl = TextEditingController();
   final _emailCtrl  = TextEditingController();
   final _passCtrl   = TextEditingController();
 
+  // Rol y campos extra
   String _rol = 'estudiante';
-  // estudiante
   final _nivelEducCtrl = TextEditingController();
   final _discapCtrl    = TextEditingController();
-  // tutor
   final _relacionCtrl  = TextEditingController();
-  // docente
   final _paisCtrl   = TextEditingController();
   final _ciudadCtrl = TextEditingController();
   final _areaCtrl   = TextEditingController();
   final _instCtrl   = TextEditingController();
 
+  // Estado y servicios
   bool _loading = false;
-
   final _auth = FirebaseAuth.instance;
   final _db   = FirebaseFirestore.instance;
   final _fs   = FirestoreService();
@@ -50,6 +48,7 @@ class _RegistroScreenState extends State<RegistroScreen> {
     super.dispose();
   }
 
+  // Validaciones simples
   String? _validateNombre(String? v) {
     if (v == null || v.trim().isEmpty) return 'El nombre es requerido';
     if (v.trim().length < 3) return 'Mínimo 3 caracteres';
@@ -92,22 +91,28 @@ class _RegistroScreenState extends State<RegistroScreen> {
     return null;
   }
 
+  // Registro principal
   Future<void> _registrar() async {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _loading = true);
 
     try {
+      // 1) Alta en Auth
       final cred = await _auth.createUserWithEmailAndPassword(
         email: _emailCtrl.text.trim(),
         password: _passCtrl.text,
       );
       await cred.user!.updateDisplayName(_nombreCtrl.text.trim());
 
+      // 2) Rol a guardar ('docente_solicitado' si eligió Docente)
+      final rolAguardar = (_rol == 'docente') ? 'docente_solicitado' : _rol;
+
+      // 3) Guardar en 'usuarios'
       await _fs.guardarUsuario(
         uid: cred.user!.uid,
         nombre: _nombreCtrl.text.trim(),
         correo: _emailCtrl.text.trim(),
-        rol: _rol,
+        rol: rolAguardar,
         nivelEducativo: _nivelEducCtrl.text,
         discapacidad: _discapCtrl.text,
         relacionFamiliar: _relacionCtrl.text,
@@ -117,14 +122,38 @@ class _RegistroScreenState extends State<RegistroScreen> {
         institucion: _instCtrl.text,
       );
 
+      // 4) Si es Docente, crear solicitud
+      if (_rol == 'docente') {
+        await _db.collection('solicitudes_docente').add({
+          'uid'         : cred.user!.uid,
+          'nombre'      : _nombreCtrl.text.trim(),
+          'correo'      : _emailCtrl.text.trim().toLowerCase(),
+          'pais'        : _paisCtrl.text.trim(),
+          'ciudad'      : _ciudadCtrl.text.trim(),
+          'area'        : _areaCtrl.text.trim(),
+          'institucion' : _instCtrl.text.trim(),
+          'estado'      : 'pendiente',
+          'creadoEn'    : FieldValue.serverTimestamp(),
+          'actualizadoEn': FieldValue.serverTimestamp(),
+        });
+      }
+
+      // 5) Verificación de correo y salida
       if (!cred.user!.emailVerified) {
         await cred.user!.sendEmailVerification();
         await _auth.signOut();
+
+        final extra = (_rol == 'docente')
+            ? '\n\nTu solicitud para Docente fue enviada. Un administrador debe aprobarla antes de que puedas ingresar.'
+            : '';
+        if (!mounted) return;
         await showDialog(
           context: context,
           builder: (_) => AlertDialog(
             title: const Text('Revisa tu correo'),
-            content: Text('Te envié un enlace a ${_emailCtrl.text.trim()} para verificar tu cuenta.'),
+            content: Text(
+              'Te envié un enlace a ${_emailCtrl.text.trim()} para verificar tu cuenta.$extra',
+            ),
             actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('OK'))],
           ),
         );
@@ -132,7 +161,6 @@ class _RegistroScreenState extends State<RegistroScreen> {
 
       if (!mounted) return;
       Navigator.pushReplacementNamed(context, '/login');
-
     } on FirebaseAuthException catch (e) {
       final msg = switch (e.code) {
         'email-already-in-use' => 'Ese correo ya está registrado',
@@ -140,11 +168,15 @@ class _RegistroScreenState extends State<RegistroScreen> {
         'weak-password'        => 'La contraseña es muy débil',
         _ => 'Error de autenticación: ${e.code}',
       };
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+      }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error al registrar: $e')),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error al registrar: $e')),
+        );
+      }
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -164,6 +196,7 @@ class _RegistroScreenState extends State<RegistroScreen> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
+                  // Rol
                   DropdownButtonFormField<String>(
                     value: _rol,
                     decoration: const InputDecoration(
@@ -178,6 +211,8 @@ class _RegistroScreenState extends State<RegistroScreen> {
                     onChanged: (v) => setState(() => _rol = v!),
                   ),
                   const SizedBox(height: 12),
+
+                  // Básicos
                   TextFormField(
                     controller: _nombreCtrl,
                     decoration: const InputDecoration(
@@ -208,6 +243,7 @@ class _RegistroScreenState extends State<RegistroScreen> {
                   ),
                   const SizedBox(height: 16),
 
+                  // Estudiante
                   if (_rol == 'estudiante') ...[
                     TextFormField(
                       controller: _nivelEducCtrl,
@@ -227,6 +263,7 @@ class _RegistroScreenState extends State<RegistroScreen> {
                     const SizedBox(height: 12),
                   ],
 
+                  // Tutor
                   if (_rol == 'tutor') ...[
                     TextFormField(
                       controller: _relacionCtrl,
@@ -239,6 +276,7 @@ class _RegistroScreenState extends State<RegistroScreen> {
                     const SizedBox(height: 12),
                   ],
 
+                  // Docente
                   if (_rol == 'docente') ...[
                     TextFormField(
                       controller: _paisCtrl,
@@ -275,10 +313,18 @@ class _RegistroScreenState extends State<RegistroScreen> {
                       ),
                       validator: _requiredIfDocente,
                     ),
+                    const SizedBox(height: 8),
+                    const Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        'Nota: si eliges Docente, tu cuenta quedará en revisión por un administrador.',
+                        style: TextStyle(fontSize: 12, color: Colors.black54),
+                      ),
+                    ),
                     const SizedBox(height: 12),
                   ],
 
-                  const SizedBox(height: 8),
+                  // Botón
                   SizedBox(
                     width: double.infinity,
                     child: FilledButton(

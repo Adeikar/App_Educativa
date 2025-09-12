@@ -1,4 +1,4 @@
-// ignore_for_file: use_build_context_synchronously
+// Pantalla de login con validaciones, recuperación de contraseña y verificación de correo.
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../services/auth_service.dart';
@@ -10,6 +10,7 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
+  // Controladores y variables de estado para el login.
   final _formKey = GlobalKey<FormState>();
   final _emailCtrl = TextEditingController();
   final _passCtrl = TextEditingController();
@@ -18,17 +19,18 @@ class _LoginScreenState extends State<LoginScreen> {
 
   bool _loading = false;
   bool _obscure = true;
-  bool _easyMode = true; // <-- Modo sencillo por defecto
-  String? _errorMsg;     // <-- Mensaje corto y claro arriba del formulario
+  bool _easyMode = true; // Modo sencillo por defecto (validación ligera).
+  String? _errorMsg;     // Mensaje de error que aparece en el formulario.
 
   @override
   void dispose() {
+    // Liberamos memoria de los controladores.
     _emailCtrl.dispose();
     _passCtrl.dispose();
     super.dispose();
   }
 
-  // Validaciones suaves: en modo sencillo no exigimos contraseña “fuerte”.
+  // Validación del correo.
   String? _validateEmail(String? v) {
     if (v == null || v.trim().isEmpty) return 'Escribe tu correo';
     final email = v.trim();
@@ -37,6 +39,7 @@ class _LoginScreenState extends State<LoginScreen> {
     return null;
   }
 
+  // Validación de la contraseña (más estricta si easyMode = false).
   String? _validatePass(String? v) {
     if (v == null || v.isEmpty) return 'Escribe tu contraseña';
     if (_easyMode) return null;
@@ -52,6 +55,7 @@ class _LoginScreenState extends State<LoginScreen> {
     return null;
   }
 
+  // Lógica principal de login con FirebaseAuth.
   Future<void> _login() async {
     setState(() => _errorMsg = null);
     if (!_formKey.currentState!.validate()) {
@@ -66,7 +70,7 @@ class _LoginScreenState extends State<LoginScreen> {
     try {
       final cred = await _auth.signIn(email, pass);
 
-      // Si el correo no está verificado, mensaje breve y claro
+      // Verifica si el correo ya fue confirmado.
       if (!cred.user!.emailVerified) {
         await _auth.sendEmailVerification(cred.user!);
         await _auth.signOut();
@@ -91,6 +95,7 @@ class _LoginScreenState extends State<LoginScreen> {
       if (!mounted) return;
       Navigator.pushReplacementNamed(context, '/home');
     } on FirebaseAuthException catch (e) {
+      // Manejo de errores comunes de autenticación.
       String msg;
       switch (e.code) {
         case 'invalid-credential':
@@ -117,6 +122,7 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
+  // Lógica de recuperación de contraseña.
   Future<void> _forgot() async {
     final email = _emailCtrl.text.trim();
     if (email.isEmpty) {
@@ -136,6 +142,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // Construcción de la interfaz de usuario del login.
     final cs = Theme.of(context).colorScheme;
     final textScale = MediaQuery.of(context).textScaleFactor.clamp(1.0, 1.2);
 
@@ -152,11 +159,11 @@ class _LoginScreenState extends State<LoginScreen> {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    // Encabezado amigable y de alto contraste
+                    // Encabezado visual superior.
                     _HeaderWelcome(),
                     const SizedBox(height: 16),
 
-                    // Tarjeta con formulario
+                    // Tarjeta con formulario de login.
                     Card(
                       elevation: 2,
                       shape: RoundedRectangleBorder(
@@ -168,7 +175,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           key: _formKey,
                           child: Column(
                             children: [
-                              // Mensaje de apoyo (lenguaje simple)
+                              // Texto de apoyo introductorio.
                               Semantics(
                                 header: true,
                                 child: Text(
@@ -185,13 +192,13 @@ class _LoginScreenState extends State<LoginScreen> {
                               ),
                               const SizedBox(height: 12),
 
-                              // Banner de error claro
+                              // Banner de error en caso de fallo.
                               if (_errorMsg != null) ...[
                                 _ErrorBanner(msg: _errorMsg!),
                                 const SizedBox(height: 8),
                               ],
 
-                              // Campo correo
+                              // Campo de correo electrónico.
                               TextFormField(
                                 controller: _emailCtrl,
                                 keyboardType: TextInputType.emailAddress,
@@ -209,7 +216,7 @@ class _LoginScreenState extends State<LoginScreen> {
                               ),
                               const SizedBox(height: 12),
 
-                              // Campo contraseña
+                              // Campo de contraseña con botón mostrar/ocultar.
                               TextFormField(
                                 controller: _passCtrl,
                                 textInputAction: TextInputAction.done,
@@ -232,7 +239,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                 onFieldSubmitted: (_) => _loading ? null : _login(),
                               ),
 
-                              // Ayuda visual de contraseña (solo en modo detallado)
+                              // Consejos de contraseña en modo detallado.
                               AnimatedCrossFade(
                                 firstChild: const SizedBox.shrink(),
                                 secondChild: Padding(
@@ -247,7 +254,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
                               const SizedBox(height: 16),
 
-                              // Botón Entrar: grande y de alto contraste
+                              // Botón principal de login.
                               SizedBox(
                                 width: double.infinity,
                                 child: FilledButton.icon(
@@ -266,7 +273,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                 ),
                               ),
 
-                              // Acciones secundarias, separadas visualmente
+                              // Botones secundarios: recuperar contraseña y crear cuenta.
                               const SizedBox(height: 8),
                               Row(
                                 children: [
@@ -293,7 +300,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
                               const Divider(height: 20),
 
-                              // Conmutador de Modo sencillo/detallado (lenguaje llano)
+                              // Switch para cambiar entre modo sencillo y detallado.
                               SwitchListTile(
                                 contentPadding: EdgeInsets.zero,
                                 title: const Text('Modo sencillo'),
@@ -312,7 +319,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
                     const SizedBox(height: 16),
 
-                    // Nota amable y corta
+                    // Nota final de confianza para el usuario.
                     Text(
                       'Tus datos están protegidos. Si necesitas ayuda, pide apoyo a tu docente o tutor.',
                       textAlign: TextAlign.center,
@@ -330,7 +337,7 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 }
 
-/// Encabezado grande con alto contraste y pictograma.
+// Encabezado visual con icono y saludo.
 class _HeaderWelcome extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
@@ -369,7 +376,7 @@ class _HeaderWelcome extends StatelessWidget {
   }
 }
 
-/// Bloque de reglas de contraseña (solo se muestra en modo detallado).
+// Widget con consejos para crear contraseñas seguras.
 class _PasswordHint extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
@@ -397,6 +404,7 @@ class _PasswordHint extends StatelessWidget {
   }
 }
 
+// Línea individual usada en la lista de consejos.
 class _HintLine extends StatelessWidget {
   final String text;
   const _HintLine({required this.text});
@@ -409,7 +417,7 @@ class _HintLine extends StatelessWidget {
   }
 }
 
-/// Banner de error de alto contraste con lenguaje simple.
+// Banner de error rojo con ícono y texto claro.
 class _ErrorBanner extends StatelessWidget {
   final String msg;
   const _ErrorBanner({required this.msg});
