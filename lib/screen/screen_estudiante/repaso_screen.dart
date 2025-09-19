@@ -14,27 +14,39 @@ class RepasoScreen extends StatefulWidget {
 }
 
 class _RepasoScreenState extends State<RepasoScreen> {
-  final _ql = QLearningService();
+  final _ql = QLearningService();      
   final _engine = ExerciseEngine();
 
-  // ejercicio actual
+  // Ejercicio actual
   Exercise? _ex;
-  String? _nivel;
 
-  // estado de sesión
-  int _idx = 0;                 // índice 0.._max-1 (lo que mostramos será _idx+1, sin pasarse de _max)
+  // Estado RL (MDP)
+  String _s = 'muy_basico';            
+  String _a = 'mantener';              
+  String _sPrime = 'muy_basico';       
+  DateTime? _qStart;                   
+
+  // Sesión
+  int _idx = 0;                       
   int _aciertos = 0;
   int _errores = 0;
   final int _max = 10;
   late DateTime _inicio;
 
-  // feedback de pregunta
-  bool _bloqueado = false;      // para evitar múltiples taps
-  int? _seleccion;              // opción seleccionada por el usuario
+  // UI
+  bool _bloqueado = false;             
+  int? _seleccion;                     
 
-  // control de dificultad local (evita saltos bruscos)
-  final List<String> _orden = ['muy_basico', 'basico', 'medio', 'alto'];
-  int _streakOK = 0;            // racha de aciertos
+  // ---------- Parámetros de recompensa ----------
+  static const int _bonusRapidoSeg = 5;     // <5 s → bonus
+  static const int _lentoSeg = 15;          // >15 s → pequeña penalización
+  static const double _rCorrecto = 1.0;     // base por acierto
+  static const double _rBonusRapido = 0.2;  // bonus por rapidez
+  static const double _rIncorrectoCerca = -0.2; // castigo suave si estuvo cerca (±2)
+  static const double _rIncorrectoLejano = -0.4; // castigo si estuvo lejos
+  static const double _rPenalLento = -0.1;  // penalización suave por tardanza
+  static const int _umbralCercania = 2;     // “cerca” = diferencia ≤ 2
+  static const double _rMax = 1.3, _rMin = -0.5; // clamp para estabilidad
 
   @override
   void initState() {
@@ -44,39 +56,66 @@ class _RepasoScreenState extends State<RepasoScreen> {
   }
 
   Future<void> _cargarPrimero() async {
-    // primer nivel según Q-Table (sin exploración aleatoria visualmente molesta)
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid == null) {
       if (mounted) Navigator.pushReplacementNamed(context, '/login');
       return;
     }
-    final nivel = await _ql.selectNivel(uid, widget.tema);
-    await _cargarEjercicio(nivel);
+    // Puedes inicializar _s con un nivel guardado del usuario si quieres.
+    _s = 'muy_basico';
+    await _planificarYSometerSiguiente(uid);
+  }
+
+  /// Planifica el próximo paso con el AGENTE (ε-greedy) y genera el ejercicio en s'
+  Future<void> _planificarYSometerSiguiente(String uid) async {
+    // 1) El agente elige acción en el estado actual (nivel actual)
+    _a = await _ql.pickAction(uid, widget.tema, _s);
+
+    // 2) Aplicas la acción → nuevo nivel (estado siguiente s')
+    _sPrime = _ql.applyAction(_s, _a);
+
+    // 3) Generas el ejercicio en el NUEVO nivel (s')
+    await _cargarEjercicio(_sPrime);
   }
 
   Future<void> _cargarEjercicio(String nivel) async {
     setState(() {
-      _nivel = nivel;
       _ex = _engine.generate(widget.tema, nivel);
       _bloqueado = false;
       _seleccion = null;
+      _qStart = DateTime.now(); // inicio por pregunta
     });
   }
 
-  int _clampNivelIndex(int i) => i.clamp(0, _orden.length - 1);
+  // --------- Regla de recompensa inclusiva ----------
+  double _calcularReward({
+    required bool correcto,
+    required int valorUsuario,
+    required int respuestaCorrecta,
+    required int duracionSeg,
+  }) {
+    double r;
 
-  String _bajarNivel(String actual) {
-    final i = _clampNivelIndex(_orden.indexOf(actual) - 1);
-    return _orden[i];
+    if (correcto) {
+      r = _rCorrecto;
+      if (duracionSeg < _bonusRapidoSeg) r += _rBonusRapido;     // bonus por rapidez
+    } else {
+      final diff = (valorUsuario - respuestaCorrecta).abs();
+      r = (diff <= _umbralCercania) ? _rIncorrectoCerca : _rIncorrectoLejano; // castigos suaves
     }
 
-  String _subirNivel(String actual) {
-    final i = _clampNivelIndex(_orden.indexOf(actual) + 1);
-    return _orden[i];
+    // penalización suave por tardanza (evita alargar sin foco)
+    if (duracionSeg > _lentoSeg) r += _rPenalLento;
+
+    // clamp para mantener rangos estables
+    if (r > _rMax) r = _rMax;
+    if (r < _rMin) r = _rMin;
+
+    return r;
   }
 
   Future<void> _contestar(int valor) async {
-    if (_bloqueado || _ex == null || _nivel == null) return;
+    if (_bloqueado || _ex == null) return;
     setState(() {
       _bloqueado = true;
       _seleccion = valor;
@@ -84,21 +123,37 @@ class _RepasoScreenState extends State<RepasoScreen> {
 
     final uid = FirebaseAuth.instance.currentUser!.uid;
     final correcto = (valor == _ex!.respuesta);
-    final reward = correcto ? 1.0 : -1.0;
 
-    // actualizar métrica local
+    final durSeg = _qStart == null
+        ? 0
+        : DateTime.now().difference(_qStart!).inSeconds;
+
+    // <<< AQUÍ defines premio/castigo >>>
+    final reward = _calcularReward(
+      correcto: correcto,
+      valorUsuario: valor,
+      respuestaCorrecta: _ex!.respuesta,
+      duracionSeg: durSeg,
+    );
+
+    // Stats locales
     if (correcto) {
       _aciertos++;
-      _streakOK++;
     } else {
       _errores++;
-      _streakOK = 0;
     }
 
-    // actualizar Q-Table en Firestore
-    await _ql.updateQ(uid, widget.tema, _nivel!, reward);
+    // Bellman update con (s, a, r, s')
+    await _ql.updateQ(
+      uid: uid,
+      tema: widget.tema,
+      s: _s,
+      a: _a,
+      r: reward,
+      sPrime: _sPrime,
+    );
 
-    // feedback visual inmediato
+    // Feedback visual
     if (mounted) {
       ScaffoldMessenger.of(context).hideCurrentSnackBar();
       ScaffoldMessenger.of(context).showSnackBar(
@@ -114,7 +169,6 @@ class _RepasoScreenState extends State<RepasoScreen> {
   }
 
   Future<void> _siguiente() async {
-    // avanzar índice SOLO cuando el usuario pulsa “Siguiente”
     setState(() => _idx++);
 
     if (_idx >= _max) {
@@ -122,27 +176,19 @@ class _RepasoScreenState extends State<RepasoScreen> {
       return;
     }
 
-    // lógica de dificultad adaptativa (local, sin “explorar” aleatoriamente)
-    String proximo = _nivel ?? 'muy_basico';
-    if (_seleccion == _ex!.respuesta) {
-      // si va bien dos seguidas, subir un nivel
-      if (_streakOK >= 2) {
-        proximo = _subirNivel(proximo);
-        _streakOK = 0; // reinicia para exigir otra racha en el nuevo nivel
-      }
-    } else {
-      // si falla, bajar inmediatamente
-      proximo = _bajarNivel(proximo);
-    }
+    // Avanza el proceso de decisión: s ← s'
+    _s = _sPrime;
 
-    await _cargarEjercicio(proximo);
+    // Planifica el siguiente paso con el agente
+    final uid = FirebaseAuth.instance.currentUser!.uid;
+    await _planificarYSometerSiguiente(uid);
   }
 
   Future<void> _guardarSesionYMostrarResumen() async {
     final uid = FirebaseAuth.instance.currentUser!.uid;
     final dur = DateTime.now().difference(_inicio).inSeconds;
 
-    // Intento de guardado (no rompemos la UI si falla)
+    // Guardado best-effort
     try {
       await FirebaseFirestore.instance.collection('sesiones').add({
         'fecha': FieldValue.serverTimestamp(),
@@ -151,7 +197,6 @@ class _RepasoScreenState extends State<RepasoScreen> {
         'duracion': dur,
         'aciertos': _aciertos,
         'errores': _errores,
-        // puedes añadir el detalle por ejercicio si quieres
       });
     } catch (_) {}
 
@@ -190,7 +235,6 @@ class _RepasoScreenState extends State<RepasoScreen> {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
-    // índice mostrado (no pasa de _max)
     final mostrado = (_idx + 1 <= _max) ? (_idx + 1) : _max;
 
     return Scaffold(

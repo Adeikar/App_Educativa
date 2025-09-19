@@ -19,7 +19,7 @@ class EstudianteScreen extends StatefulWidget {
 class _EstudianteScreenState extends State<EstudianteScreen> {
   int _index = 0;
 
-  // Colores de alto contraste y consistentes
+  // Paleta consistente con el resto del proyecto
   static const _bg = Color(0xFFF7F8FA);
   static const _primary = Color(0xFF0B57D0); // azul fuerte
   static const _onPrimary = Colors.white;
@@ -29,7 +29,8 @@ class _EstudianteScreenState extends State<EstudianteScreen> {
   @override
   Widget build(BuildContext context) {
     final currentUser = FirebaseAuth.instance.currentUser;
-    final nombreUsuario = widget.nombre ?? (currentUser?.displayName ?? 'Estudiante');
+    final nombreUsuario =
+        widget.nombre ?? (currentUser?.displayName ?? 'Estudiante');
 
     final tabs = [
       const TemasTab(),
@@ -38,7 +39,7 @@ class _EstudianteScreenState extends State<EstudianteScreen> {
       PerfilTab(nombre: nombreUsuario),
     ];
 
-    // Tema local de alto contraste para esta pantalla
+    // Tema local para esta pantalla
     final localTheme = Theme.of(context).copyWith(
       colorScheme: Theme.of(context).colorScheme.copyWith(
             primary: _primary,
@@ -47,14 +48,14 @@ class _EstudianteScreenState extends State<EstudianteScreen> {
             onSurface: Colors.black87,
           ),
       navigationBarTheme: const NavigationBarThemeData(
-        height: 78, // toque cómodo
+        height: 78,
         backgroundColor: _card,
-        indicatorColor: Color(0xFFE7F0FF), // resaltado suave pero visible
+        indicatorColor: Color(0xFFE7F0FF),
         labelTextStyle: WidgetStatePropertyAll(
           TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
         ),
       ),
-      iconTheme: const IconThemeData(size: 28), // iconos grandes
+      iconTheme: const IconThemeData(size: 28),
       cardTheme: CardThemeData(
         color: _card,
         elevation: 2,
@@ -66,30 +67,10 @@ class _EstudianteScreenState extends State<EstudianteScreen> {
       data: localTheme,
       child: Scaffold(
         backgroundColor: _bg,
-        appBar: AppBar(
-          backgroundColor: _card,
-          surfaceTintColor: _card,
-          elevation: 0.5,
-          titleSpacing: 16,
-          title: Semantics(
-            header: true,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('Hola, $nombreUsuario',
-                    style: const TextStyle(fontWeight: FontWeight.w800)),
-                const SizedBox(height: 2),
-                const Text(
-                  'Elige una pestaña para continuar',
-                  style: TextStyle(fontSize: 12, color: Colors.black54),
-                ),
-              ],
-            ),
-          ),
-        ),
+        appBar: _HeaderAppBarEstudiante(nombre: nombreUsuario),
         body: SafeArea(
           child: AnimatedSwitcher(
-            duration: const Duration(milliseconds: 150), // animación breve (evitar sobrecarga)
+            duration: const Duration(milliseconds: 150),
             switchInCurve: Curves.easeOut,
             switchOutCurve: Curves.easeIn,
             child: Semantics(
@@ -99,13 +80,10 @@ class _EstudianteScreenState extends State<EstudianteScreen> {
             ),
           ),
         ),
-
-        // NavigationBar (Material 3) con etiquetas SIEMPRE visibles
         bottomNavigationBar: NavigationBar(
           selectedIndex: _index,
           onDestinationSelected: (i) {
             setState(() => _index = i);
-            // feedback sutil (opcional)
             HapticFeedback.selectionClick();
           },
           destinations: [
@@ -135,7 +113,7 @@ class _EstudianteScreenState extends State<EstudianteScreen> {
     );
   }
 
-  // Helper: destino accesible con semántica
+  // Item accesible de la barra inferior
   NavigationDestination _navItem({
     required IconData icon,
     required String label,
@@ -154,7 +132,7 @@ class _EstudianteScreenState extends State<EstudianteScreen> {
         child: Icon(icon, color: _selected),
       ),
       label: label,
-      tooltip: label, // aparece al mantener pulsado/hover (web)
+      tooltip: label,
     );
   }
 
@@ -171,5 +149,112 @@ class _EstudianteScreenState extends State<EstudianteScreen> {
       default:
         return 'Sección';
     }
+  }
+}
+
+/// AppBar con degradé y saludo (mismo estilo que Docente, adaptado a Estudiante).
+class _HeaderAppBarEstudiante extends StatelessWidget
+    implements PreferredSizeWidget {
+  final String nombre;
+  const _HeaderAppBarEstudiante({required this.nombre});
+
+  static const _primary = Color(0xFF0B57D0);
+  static const _onPrimary = Colors.white;
+
+  @override
+  Size get preferredSize => const Size.fromHeight(96);
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+
+    return AppBar(
+      systemOverlayStyle: const SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        statusBarIconBrightness: Brightness.light,
+        statusBarBrightness: Brightness.dark,
+      ),
+      toolbarHeight: 96,
+      elevation: 0,
+      automaticallyImplyLeading: false,
+      flexibleSpace: Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [
+              cs.primary.withOpacity(0.90), // mantiene coherencia con el tema
+              _primary,
+            ],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+        ),
+      ),
+      titleSpacing: 0,
+      title: Padding(
+        padding: const EdgeInsets.only(right: 12),
+        child: Row(
+          children: [
+            const SizedBox(width: 12),
+            CircleAvatar(
+              radius: 26,
+              backgroundColor: _onPrimary.withOpacity(0.15),
+              child: const Icon(Icons.school, color: _onPrimary),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Semantics(
+                    header: true,
+                    child: Text(
+                      'Panel del Estudiante',
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                            color: _onPrimary,
+                            fontWeight: FontWeight.w700,
+                          ),
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    'Hola, $nombre',
+                    style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                          color: _onPrimary.withOpacity(0.95),
+                        ),
+                  ),
+                ],
+              ),
+            ),
+            IconButton(
+              tooltip: 'Ayuda',
+              onPressed: () {
+                showDialog(
+                  context: context,
+                  builder: (_) => AlertDialog(
+                    title: const Text('Consejos rápidos'),
+                    content: const Text(
+                      '• “Temas”: revisa teoría y ejemplos.\n'
+                      '• “Inicio”: práctica rápida por categorías.\n'
+                      '• “Progreso”: mira tus resultados y avances.\n'
+                      '• “Perfil”: edita tus datos y preferencia de estudio.',
+                    ),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(context),
+                        child: const Text('Entendido'),
+                      ),
+                    ],
+                  ),
+                );
+              },
+              icon: const Icon(Icons.help_outline, color: _onPrimary),
+            ),
+          ],
+        ),
+      ),
+      backgroundColor: Colors.transparent,
+      surfaceTintColor: Colors.transparent,
+    );
   }
 }
