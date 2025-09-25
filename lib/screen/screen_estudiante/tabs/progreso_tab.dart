@@ -2,7 +2,7 @@ import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-import '../repaso_screen.dart'; // <-- ajusta la ruta si tu estructura difiere
+import '../repaso_screen.dart';
 
 /// Estructura agregada por tema
 class _TemaStats {
@@ -31,13 +31,50 @@ class _ProgresoTabState extends State<ProgresoTab> {
   /// Progreso agregado por tema (suma/resta/multiplicacion/conteo)
   final Map<String, _TemaStats> _porTema = {};
 
-  /// Niveles estimados desde la Q-Table (muy_basico, basico, medio, alto)
+  /// Nivel por tema (muy_basico, basico, medio, alto)
   Map<String, String> _nivelPorTema = {};
 
   @override
   void initState() {
     super.initState();
     _cargar();
+  }
+
+  Future<DocumentSnapshot<Map<String, dynamic>>?> _getUserDoc(String uid) async {
+    // Primero intenta en 'users' (donde escribe RepasoScreen). Si no existe, prueba 'usuarios'.
+    final usersRef = FirebaseFirestore.instance.collection('users').doc(uid);
+    final usersDoc = await usersRef.get();
+    if (usersDoc.exists) return usersDoc;
+    final usuariosRef = FirebaseFirestore.instance.collection('usuarios').doc(uid);
+    final usuariosDoc = await usuariosRef.get();
+    if (usuariosDoc.exists) return usuariosDoc;
+    return null;
+  }
+
+  String _inferNivelDesdeQTableTema(Map<String, dynamic> tablaTema) {
+    // Busca claves tipo 'suma:basico:L2' y se queda con la de mayor Q (máximo entre acciones).
+    final rx = RegExp(r'^(suma|resta|multiplicacion|conteo):(muy_basico|basico|medio|alto):L\d+$');
+    String bestNivel = 'muy_basico';
+    double bestQ = -1e9;
+
+    tablaTema.forEach((k, v) {
+      // ignore: unnecessary_type_check
+      if (k is String && rx.hasMatch(k) && v is Map) {
+        double localMax = -1e9;
+        // ignore: unnecessary_cast
+        (v as Map).values.forEach((val) {
+          if (val is num) {
+            final d = val.toDouble();
+            if (d > localMax) localMax = d;
+          }
+        });
+        if (localMax > bestQ) {
+          bestQ = localMax;
+          bestNivel = rx.firstMatch(k)!.group(2)!; // grupo 2 = nivel
+        }
+      }
+    });
+    return bestNivel;
   }
 
   Future<void> _cargar() async {
@@ -57,7 +94,7 @@ class _ProgresoTabState extends State<ProgresoTab> {
     }
 
     try {
-      // --- 1) Leer sesiones del usuario ---
+      // --- 1) Leer sesiones del usuario (agrega métricas) ---
       final sesionesSnap = await FirebaseFirestore.instance
           .collection('sesiones')
           .where('estudianteId', isEqualTo: uid)
@@ -67,7 +104,6 @@ class _ProgresoTabState extends State<ProgresoTab> {
       String ultimo = 'Ninguno';
       int totalIntentos = 0;
       int totalSegundos = 0;
-
       final Map<String, _TemaStats> porTema = {};
 
       for (final doc in sesionesSnap.docs) {
@@ -77,32 +113,29 @@ class _ProgresoTabState extends State<ProgresoTab> {
                 ?.cast<Map<String, dynamic>>() ??
             [];
 
-        // tiempo de la sesión
         final dur = (data['duracion'] is num)
             ? (data['duracion'] as num).toInt()
             : 0;
         totalSegundos += dur;
 
-        // si guardaste 'tema' directo en la sesión (tu variante más reciente)
         final temaRaiz = (data['tema'] as String?)?.trim();
 
         if (ejercicios.isEmpty && temaRaiz != null && temaRaiz.isNotEmpty) {
-          // Sesión sin detalle, pero con tema y aciertos/errores totales
           final t = temaRaiz;
           porTema.putIfAbsent(t, () => _TemaStats());
           porTema[t]!.ejercicios +=
               ((data['aciertos'] ?? 0) as num).toInt() +
-                  ((data['errores'] ?? 0) as num).toInt();
+              ((data['errores'] ?? 0) as num).toInt();
           porTema[t]!.aciertos += ((data['aciertos'] ?? 0) as num).toInt();
           porTema[t]!.errores += ((data['errores'] ?? 0) as num).toInt();
           porTema[t]!.segundos += dur;
 
-          totalIntentos += porTema[t]!.ejercicios;
+          totalIntentos += ((data['aciertos'] ?? 0) as num).toInt() +
+              ((data['errores'] ?? 0) as num).toInt();
           if (ultimo == 'Ninguno') ultimo = t;
           continue;
         }
 
-        // Sesión con detalle por ejercicio
         for (final e in ejercicios) {
           final t = (e['tema'] as String?)?.trim() ?? 'desconocido';
           porTema.putIfAbsent(t, () => _TemaStats());
@@ -127,36 +160,34 @@ class _ProgresoTabState extends State<ProgresoTab> {
         }
       }
 
-      // --- 2) Leer Q-Table para inferir nivel por tema ---
-      final userSnap = await FirebaseFirestore.instance
-          .collection('usuarios')
-          .doc(uid)
-          .get();
-
-      final qTable =
-          (userSnap.data()?['qTable'] as Map<String, dynamic>?) ?? {};
+      // --- 2) Leer progreso/nivel oficial por tema (de users/usuarios) ---
+      final userDoc = await _getUserDoc(uid);
       final Map<String, String> nivelPorTema = {};
-      const niveles = ['muy_basico', 'basico', 'medio', 'alto'];
 
-      String _argmaxNivel(Map<String, dynamic> tablaTema) {
-        String best = 'muy_basico';
-        double bestQ = -1e9;
-        for (final n in niveles) {
-          final q = (tablaTema[n] is num)
-              ? (tablaTema[n] as num).toDouble()
-              : 0.0;
-          if (q > bestQ) {
-            bestQ = q;
-            best = n;
+      if (userDoc != null && userDoc.exists) {
+        final udata = userDoc.data() ?? {};
+
+        // a) Fuente principal: 'progreso'
+        final prog = (udata['progreso'] as Map?)?.cast<String, dynamic>() ?? {};
+        for (final entry in prog.entries) {
+          final tema = entry.key;
+          final m = (entry.value as Map?)?.cast<String, dynamic>() ?? {};
+          final nivel = (m['nivelActual'] as String?)?.trim();
+          if (nivel != null && nivel.isNotEmpty) {
+            nivelPorTema[tema] = nivel;
           }
         }
-        return best;
-      }
 
-      for (final entry in qTable.entries) {
-        final tema = entry.key.toString();
-        final tablaTema = (entry.value as Map<String, dynamic>? ) ?? {};
-        nivelPorTema[tema] = _argmaxNivel(tablaTema);
+        // b) Si falta algún tema, inferir desde qTable
+        final qTable =
+            (udata['qTable'] as Map?)?.cast<String, dynamic>() ?? {};
+        for (final tema in qTable.keys) {
+          if (nivelPorTema.containsKey(tema)) continue; // ya lo tenemos
+          final tablaTema =
+              (qTable[tema] as Map?)?.cast<String, dynamic>() ?? {};
+          final inferido = _inferNivelDesdeQTableTema(tablaTema);
+          nivelPorTema[tema] = inferido;
+        }
       }
 
       setState(() {
@@ -183,7 +214,7 @@ class _ProgresoTabState extends State<ProgresoTab> {
     final sec = s % 60;
     if (m == 0) return '${sec}s';
     return '${m}m ${sec}s';
-    }
+  }
 
   Color _colorByAccuracy(double acc) {
     if (acc >= 0.8) return Colors.green;
@@ -232,8 +263,7 @@ class _ProgresoTabState extends State<ProgresoTab> {
                   ),
                 ),
                 Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                   decoration: BoxDecoration(
                     color: Colors.blue.shade50,
                     borderRadius: BorderRadius.circular(20),
@@ -323,7 +353,7 @@ class _ProgresoTabState extends State<ProgresoTab> {
               title: const Text('Resumen general',
                   style: TextStyle(fontWeight: FontWeight.bold)),
               subtitle: Text(
-                'Intentos: $_totalIntentos   •   Tiempo: ${_formatDur(_totalSegundos)}',
+                'Intentos: $_totalIntentos  •  Tiempo: ${_formatDur(_totalSegundos)}',
               ),
             ),
           ),
@@ -359,6 +389,7 @@ class _ProgresoTabState extends State<ProgresoTab> {
               child: Center(child: Text('Aún no hay intentos registrados')),
             )
           else
+            // Genera una tarjeta de progreso para cada tema
             ...temasOrdenados.map((t) => _temaCard(t, _porTema[t]!)),
 
           const SizedBox(height: 20),

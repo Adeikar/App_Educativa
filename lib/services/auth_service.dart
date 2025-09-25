@@ -11,7 +11,7 @@ class AuthService {
   // Stream del estado de auth.
   Stream<User?> get userStream => _auth.authStateChanges();
 
-  // Registro genérico (usa FirestoreService para perfilar).
+  // Registro genérico 
   Future<UserCredential> signUp({
     required String email,
     required String password,
@@ -47,7 +47,7 @@ class AuthService {
     return cred;
   }
 
-  // Login: exige email verificado y bloquea 'docente_solicitado'.
+  // exige email verificado y bloquea 'docente_solicitado'.
   Future<UserCredential> signIn(String email, String password) async {
     final cred = await _auth.signInWithEmailAndPassword(
       email: email.trim(),
@@ -55,7 +55,7 @@ class AuthService {
     );
     final user = cred.user!;
 
-    // (1) Exigir verificación de correo
+    // Exigir verificación de correo
     if (!user.emailVerified) {
       await user.sendEmailVerification();
       await _auth.signOut();
@@ -65,7 +65,7 @@ class AuthService {
       );
     }
 
-    // (2) Leer rol desde Firestore y bloquear si está pendiente
+    //Leer rol desde Firestore y bloquear si está pendiente
     final doc = await _db.collection('usuarios').doc(user.uid).get();
     final rol = (doc.data()?['rol'] ?? '').toString();
 
@@ -77,7 +77,7 @@ class AuthService {
       );
     }
 
-    // (3) Metadatos de acceso
+    //Metadatos de acceso
     await _db.collection('usuarios').doc(user.uid).set({
       'ultimoAcceso': FieldValue.serverTimestamp(),
       'actualizadoEn': FieldValue.serverTimestamp(),

@@ -1,8 +1,6 @@
-// Home que rutea por rol e incluye pantalla DocentePendiente.
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-
 import 'screen_estudiante/estudiante_screen.dart';
 import 'screen_docente_tutor/docente_tutor_screen.dart';
 

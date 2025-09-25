@@ -1,4 +1,3 @@
-// RegistroScreen: guarda como 'docente_solicitado' y crea solicitud para admins.
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -28,6 +27,7 @@ class _RegistroScreenState extends State<RegistroScreen> {
   final _instCtrl   = TextEditingController();
 
   // Estado y servicios
+  bool _obscurePass = true;
   bool _loading = false;
   final _auth = FirebaseAuth.instance;
   final _db   = FirebaseFirestore.instance;
@@ -48,7 +48,28 @@ class _RegistroScreenState extends State<RegistroScreen> {
     super.dispose();
   }
 
-  // Validaciones simples
+  // ---------- Estilo unificado ----------
+  InputDecoration _deco({
+    required String label,
+    required IconData icon,
+    String? hint,
+    Widget? suffixIcon,
+  }) {
+    return InputDecoration(
+      labelText: label,
+      hintText: hint,
+      prefixIcon: Icon(icon),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: BorderSide(color: Theme.of(context).colorScheme.outlineVariant),
+      ),
+      suffixIcon: suffixIcon,
+    );
+  }
+
+  // ---------- Validaciones ----------
   String? _validateNombre(String? v) {
     if (v == null || v.trim().isEmpty) return 'El nombre es requerido';
     if (v.trim().length < 3) return 'Mínimo 3 caracteres';
@@ -91,7 +112,7 @@ class _RegistroScreenState extends State<RegistroScreen> {
     return null;
   }
 
-  // Registro principal
+  // ---------- Registro principal ----------
   Future<void> _registrar() async {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _loading = true);
@@ -125,15 +146,15 @@ class _RegistroScreenState extends State<RegistroScreen> {
       // 4) Si es Docente, crear solicitud
       if (_rol == 'docente') {
         await _db.collection('solicitudes_docente').add({
-          'uid'         : cred.user!.uid,
-          'nombre'      : _nombreCtrl.text.trim(),
-          'correo'      : _emailCtrl.text.trim().toLowerCase(),
-          'pais'        : _paisCtrl.text.trim(),
-          'ciudad'      : _ciudadCtrl.text.trim(),
-          'area'        : _areaCtrl.text.trim(),
-          'institucion' : _instCtrl.text.trim(),
-          'estado'      : 'pendiente',
-          'creadoEn'    : FieldValue.serverTimestamp(),
+          'uid'          : cred.user!.uid,
+          'nombre'       : _nombreCtrl.text.trim(),
+          'correo'       : _emailCtrl.text.trim().toLowerCase(),
+          'pais'         : _paisCtrl.text.trim(),
+          'ciudad'       : _ciudadCtrl.text.trim(),
+          'area'         : _areaCtrl.text.trim(),
+          'institucion'  : _instCtrl.text.trim(),
+          'estado'       : 'pendiente',
+          'creadoEn'     : FieldValue.serverTimestamp(),
           'actualizadoEn': FieldValue.serverTimestamp(),
         });
       }
@@ -182,8 +203,13 @@ class _RegistroScreenState extends State<RegistroScreen> {
     }
   }
 
+
+
+  // ---------- UI ----------
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+
     return Scaffold(
       appBar: AppBar(title: const Text('Crear cuenta')),
       body: Center(
@@ -199,10 +225,7 @@ class _RegistroScreenState extends State<RegistroScreen> {
                   // Rol
                   DropdownButtonFormField<String>(
                     value: _rol,
-                    decoration: const InputDecoration(
-                      labelText: 'Rol',
-                      prefixIcon: Icon(Icons.badge),
-                    ),
+                    decoration: _deco(label: 'Rol', icon: Icons.badge),
                     items: const [
                       DropdownMenuItem(value: 'estudiante', child: Text('Estudiante')),
                       DropdownMenuItem(value: 'docente', child: Text('Docente')),
@@ -215,30 +238,32 @@ class _RegistroScreenState extends State<RegistroScreen> {
                   // Básicos
                   TextFormField(
                     controller: _nombreCtrl,
-                    decoration: const InputDecoration(
-                      labelText: 'Nombre completo',
-                      prefixIcon: Icon(Icons.person),
-                    ),
+                    decoration: _deco(label: 'Nombre completo', icon: Icons.person),
                     validator: _validateNombre,
                   ),
                   const SizedBox(height: 12),
+
                   TextFormField(
                     controller: _emailCtrl,
-                    decoration: const InputDecoration(
-                      labelText: 'Correo',
-                      prefixIcon: Icon(Icons.email),
-                    ),
+                    decoration: _deco(label: 'Correo', icon: Icons.email),
                     keyboardType: TextInputType.emailAddress,
                     validator: _validateEmail,
                   ),
                   const SizedBox(height: 12),
+
                   TextFormField(
                     controller: _passCtrl,
-                    decoration: const InputDecoration(
-                      labelText: 'Contraseña',
-                      prefixIcon: Icon(Icons.lock),
+                    obscureText: _obscurePass,
+                    decoration: _deco(
+                      label: 'Contraseña',
+                      icon: Icons.lock,
+                      hint: 'Mín. 8 caracteres',
+                      suffixIcon: IconButton(
+                        tooltip: _obscurePass ? 'Mostrar' : 'Ocultar',
+                        icon: Icon(_obscurePass ? Icons.visibility : Icons.visibility_off),
+                        onPressed: () => setState(() => _obscurePass = !_obscurePass),
+                      ),
                     ),
-                    obscureText: true,
                     validator: _validatePass,
                   ),
                   const SizedBox(height: 16),
@@ -247,17 +272,17 @@ class _RegistroScreenState extends State<RegistroScreen> {
                   if (_rol == 'estudiante') ...[
                     TextFormField(
                       controller: _nivelEducCtrl,
-                      decoration: const InputDecoration(
-                        labelText: 'Nivel educativo (opcional)',
-                        prefixIcon: Icon(Icons.school),
+                      decoration: _deco(
+                        label: 'Nivel educativo (opcional)',
+                        icon: Icons.school,
                       ),
                     ),
                     const SizedBox(height: 12),
                     TextFormField(
                       controller: _discapCtrl,
-                      decoration: const InputDecoration(
-                        labelText: 'Discapacidad (opcional)',
-                        prefixIcon: Icon(Icons.accessibility),
+                      decoration: _deco(
+                        label: 'Discapacidad (opcional)',
+                        icon: Icons.accessibility,
                       ),
                     ),
                     const SizedBox(height: 12),
@@ -267,9 +292,9 @@ class _RegistroScreenState extends State<RegistroScreen> {
                   if (_rol == 'tutor') ...[
                     TextFormField(
                       controller: _relacionCtrl,
-                      decoration: const InputDecoration(
-                        labelText: 'Relación familiar',
-                        prefixIcon: Icon(Icons.family_restroom),
+                      decoration: _deco(
+                        label: 'Relación familiar',
+                        icon: Icons.family_restroom,
                       ),
                       validator: _requiredIfTutor,
                     ),
@@ -280,45 +305,33 @@ class _RegistroScreenState extends State<RegistroScreen> {
                   if (_rol == 'docente') ...[
                     TextFormField(
                       controller: _paisCtrl,
-                      decoration: const InputDecoration(
-                        labelText: 'País',
-                        prefixIcon: Icon(Icons.public),
-                      ),
+                      decoration: _deco(label: 'País', icon: Icons.public),
                       validator: _requiredIfDocente,
                     ),
                     const SizedBox(height: 12),
                     TextFormField(
                       controller: _ciudadCtrl,
-                      decoration: const InputDecoration(
-                        labelText: 'Ciudad',
-                        prefixIcon: Icon(Icons.location_city),
-                      ),
+                      decoration: _deco(label: 'Ciudad', icon: Icons.location_city),
                       validator: _requiredIfDocente,
                     ),
                     const SizedBox(height: 12),
                     TextFormField(
                       controller: _areaCtrl,
-                      decoration: const InputDecoration(
-                        labelText: 'Área',
-                        prefixIcon: Icon(Icons.work),
-                      ),
+                      decoration: _deco(label: 'Área', icon: Icons.work),
                       validator: _requiredIfDocente,
                     ),
                     const SizedBox(height: 12),
                     TextFormField(
                       controller: _instCtrl,
-                      decoration: const InputDecoration(
-                        labelText: 'Institución',
-                        prefixIcon: Icon(Icons.account_balance),
-                      ),
+                      decoration: _deco(label: 'Institución', icon: Icons.account_balance),
                       validator: _requiredIfDocente,
                     ),
                     const SizedBox(height: 8),
-                    const Align(
+                    Align(
                       alignment: Alignment.centerLeft,
                       child: Text(
                         'Nota: si eliges Docente, tu cuenta quedará en revisión por un administrador.',
-                        style: TextStyle(fontSize: 12, color: Colors.black54),
+                        style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
                       ),
                     ),
                     const SizedBox(height: 12),
@@ -330,7 +343,8 @@ class _RegistroScreenState extends State<RegistroScreen> {
                     child: FilledButton(
                       onPressed: _loading ? null : _registrar,
                       child: _loading
-                          ? const SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                          ? const SizedBox(
+                              height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2))
                           : const Text('Crear cuenta'),
                     ),
                   ),

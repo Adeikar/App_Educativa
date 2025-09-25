@@ -6,13 +6,14 @@ class FirestoreService {
   final FirebaseFirestore _db;
   final Uuid _uuid;
 
+  // Inicializa Firestore y Uuid, permitiendo inyección de dependencias.
   FirestoreService({
     FirebaseFirestore? db,
     Uuid? uuid,
-  })  : _db = db ?? FirebaseFirestore.instance,
-        _uuid = uuid ?? const Uuid();
+  }) : _db = db ?? FirebaseFirestore.instance,
+       _uuid = uuid ?? const Uuid();
 
-  // Guarda usuario (soporta 'docente' y 'docente_solicitado').
+  // Guarda el documento de usuario en Firestore, aplicando datos específicos según el rol.
   Future<void> guardarUsuario({
     required String uid,
     required String nombre,
@@ -39,11 +40,13 @@ class FirestoreService {
     };
 
     if (rol == 'estudiante') {
+      // Genera código de vinculación único y añade campos de estudiante.
       final codigo = await _generarCodigoUnico();
       data['nivelEducativo'] = (nivelEducativo ?? '').trim();
       data['discapacidad'] = (discapacidad ?? '').trim();
       data['estudiante'] = {'codigoVinculacion': codigo};
     } else if (rol == 'docente' || rol == 'docente_solicitado') {
+      // Añade campos específicos de docente.
       data['docente'] = {
         'pais': (pais ?? '').trim(),
         'ciudad': (ciudad ?? '').trim(),
@@ -51,24 +54,25 @@ class FirestoreService {
         'institucion': (institucion ?? '').trim(),
       };
     } else if (rol == 'tutor') {
+      // Añade campo específico de tutor.
       data['tutor'] = {'relacionFamiliar': (relacionFamiliar ?? '').trim()};
     }
 
     await _db.collection('usuarios').doc(uid).set(data, SetOptions(merge: true));
   }
 
-  // Obtiene usuario por uid.
+  // Obtiene el documento de usuario por su UID.
   Future<DocumentSnapshot<Map<String, dynamic>>> getUsuario(String uid) {
     return _db.collection('usuarios').doc(uid).get();
   }
 
-  // Actualiza campos parciales del usuario.
+  // Actualiza campos parciales del usuario usando merge.
   Future<void> updateUsuario(String uid, Map<String, dynamic> data) {
     data['actualizadoEn'] = FieldValue.serverTimestamp();
     return _db.collection('usuarios').doc(uid).set(data, SetOptions(merge: true));
   }
 
-  // Busca estudiante por código de vinculación.
+  // Busca y retorna el estudiante por su código de vinculación.
   Future<DocumentSnapshot<Map<String, dynamic>>?> buscarPorCodigoVinculacion(String code) async {
     final snap = await _db
         .collection('usuarios')
@@ -79,7 +83,7 @@ class FirestoreService {
     return snap.docs.first;
   }
 
-  // Verifica existencia de código.
+  // Verifica la existencia de un código de vinculación de estudiante.
   Future<bool> existeCodigo(String code) async {
     final snap = await _db
         .collection('usuarios')
@@ -89,7 +93,7 @@ class FirestoreService {
     return snap.docs.isNotEmpty;
   }
 
-  // Genera código único de 6 chars.
+  // Genera un código único alfanumérico de 6 caracteres
   Future<String> _generarCodigoUnico() async {
     const int maxRetries = 10;
     for (int i = 0; i < maxRetries; i++) {

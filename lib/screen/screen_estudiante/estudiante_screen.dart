@@ -1,8 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-
-// tabs
 import 'tabs/temas_tab.dart';
 import 'tabs/inicio_tab.dart';
 import 'tabs/progreso_tab.dart';
@@ -19,19 +17,17 @@ class EstudianteScreen extends StatefulWidget {
 class _EstudianteScreenState extends State<EstudianteScreen> {
   int _index = 0;
 
-  // Paleta consistente con el resto del proyecto
+  // Paleta local para fondo y cards.
   static const _bg = Color(0xFFF7F8FA);
-  static const _primary = Color(0xFF0B57D0); // azul fuerte
-  static const _onPrimary = Colors.white;
-  static const _selected = Color(0xFF083B8A);
   static const _card = Colors.white;
+  static const _selected = Color(0xFF083B8A);
 
   @override
   Widget build(BuildContext context) {
     final currentUser = FirebaseAuth.instance.currentUser;
-    final nombreUsuario =
-        widget.nombre ?? (currentUser?.displayName ?? 'Estudiante');
+    final nombreUsuario = widget.nombre ?? (currentUser?.displayName ?? 'Estudiante');
 
+    // Lista de las vistas (tabs) a mostrar.
     final tabs = [
       const TemasTab(),
       const InicioTab(),
@@ -39,14 +35,11 @@ class _EstudianteScreenState extends State<EstudianteScreen> {
       PerfilTab(nombre: nombreUsuario),
     ];
 
-    // Tema local para esta pantalla
+    // ignore: unused_local_variable
+    final cs = Theme.of(context).colorScheme;
+
+    // Tema local para barra inferior y cards.
     final localTheme = Theme.of(context).copyWith(
-      colorScheme: Theme.of(context).colorScheme.copyWith(
-            primary: _primary,
-            onPrimary: _onPrimary,
-            surface: _card,
-            onSurface: Colors.black87,
-          ),
       navigationBarTheme: const NavigationBarThemeData(
         height: 78,
         backgroundColor: _card,
@@ -67,12 +60,15 @@ class _EstudianteScreenState extends State<EstudianteScreen> {
       data: localTheme,
       child: Scaffold(
         backgroundColor: _bg,
+        // AppBar personalizado con gradiente y saludo.
         appBar: _HeaderAppBarEstudiante(nombre: nombreUsuario),
         body: SafeArea(
+          // Animación de transición entre tabs.
           child: AnimatedSwitcher(
             duration: const Duration(milliseconds: 150),
             switchInCurve: Curves.easeOut,
             switchOutCurve: Curves.easeIn,
+            // Widget Semantics para accesibilidad (lectores de pantalla).
             child: Semantics(
               container: true,
               label: _semanticForIndex(_index),
@@ -80,13 +76,16 @@ class _EstudianteScreenState extends State<EstudianteScreen> {
             ),
           ),
         ),
+        // Barra de navegación inferior.
         bottomNavigationBar: NavigationBar(
           selectedIndex: _index,
           onDestinationSelected: (i) {
+            // Actualiza el índice seleccionado y usa feedback háptico.
             setState(() => _index = i);
             HapticFeedback.selectionClick();
           },
           destinations: [
+            // Definición de los botones de la barra de navegación.
             _navItem(
               icon: Icons.menu_book_rounded,
               label: 'Temas',
@@ -113,7 +112,7 @@ class _EstudianteScreenState extends State<EstudianteScreen> {
     );
   }
 
-  // Item accesible de la barra inferior
+  // Crea un NavigationDestination con accesibilidad mejorada.
   NavigationDestination _navItem({
     required IconData icon,
     required String label,
@@ -136,6 +135,7 @@ class _EstudianteScreenState extends State<EstudianteScreen> {
     );
   }
 
+  // Devuelve la etiqueta semántica para el tab actual.
   String _semanticForIndex(int i) {
     switch (i) {
       case 0:
@@ -152,15 +152,13 @@ class _EstudianteScreenState extends State<EstudianteScreen> {
   }
 }
 
-/// AppBar con degradé y saludo (mismo estilo que Docente, adaptado a Estudiante).
+// Widget AppBar personalizado con altura definida y diseño con gradiente.
 class _HeaderAppBarEstudiante extends StatelessWidget
     implements PreferredSizeWidget {
   final String nombre;
   const _HeaderAppBarEstudiante({required this.nombre});
 
-  static const _primary = Color(0xFF0B57D0);
-  static const _onPrimary = Colors.white;
-
+  // Define la altura fija del AppBar.
   @override
   Size get preferredSize => const Size.fromHeight(96);
 
@@ -169,6 +167,7 @@ class _HeaderAppBarEstudiante extends StatelessWidget
     final cs = Theme.of(context).colorScheme;
 
     return AppBar(
+      // Estilo del sistema para la barra de estado (transparente con iconos claros).
       systemOverlayStyle: const SystemUiOverlayStyle(
         statusBarColor: Colors.transparent,
         statusBarIconBrightness: Brightness.light,
@@ -177,12 +176,15 @@ class _HeaderAppBarEstudiante extends StatelessWidget
       toolbarHeight: 96,
       elevation: 0,
       automaticallyImplyLeading: false,
+      backgroundColor: Colors.transparent,
+      surfaceTintColor: Colors.transparent,
+      // Contenedor con gradiente para el fondo del AppBar.
       flexibleSpace: Container(
         decoration: BoxDecoration(
           gradient: LinearGradient(
             colors: [
-              cs.primary.withOpacity(0.90), // mantiene coherencia con el tema
-              _primary,
+              cs.primaryContainer,
+              cs.primary.withOpacity(0.90),
             ],
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
@@ -195,12 +197,14 @@ class _HeaderAppBarEstudiante extends StatelessWidget
         child: Row(
           children: [
             const SizedBox(width: 12),
+            // Avatar de perfil (icono de escuela).
             CircleAvatar(
               radius: 26,
-              backgroundColor: _onPrimary.withOpacity(0.15),
-              child: const Icon(Icons.school, color: _onPrimary),
+              backgroundColor: cs.onPrimary.withOpacity(0.15),
+              child: Icon(Icons.school, color: cs.onPrimary),
             ),
             const SizedBox(width: 12),
+            // Columna con saludo y nombre del usuario.
             Expanded(
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
@@ -209,9 +213,9 @@ class _HeaderAppBarEstudiante extends StatelessWidget
                   Semantics(
                     header: true,
                     child: Text(
-                      'Panel del Estudiante',
+                      'Bienvenido de Nuevo',
                       style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                            color: _onPrimary,
+                            color: cs.onPrimary,
                             fontWeight: FontWeight.w700,
                           ),
                     ),
@@ -220,12 +224,13 @@ class _HeaderAppBarEstudiante extends StatelessWidget
                   Text(
                     'Hola, $nombre',
                     style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                          color: _onPrimary.withOpacity(0.95),
+                          color: cs.onPrimary.withOpacity(0.95),
                         ),
                   ),
                 ],
               ),
             ),
+            // Botón de ayuda que muestra un diálogo con consejos.
             IconButton(
               tooltip: 'Ayuda',
               onPressed: () {
@@ -237,7 +242,7 @@ class _HeaderAppBarEstudiante extends StatelessWidget
                       '• “Temas”: revisa teoría y ejemplos.\n'
                       '• “Inicio”: práctica rápida por categorías.\n'
                       '• “Progreso”: mira tus resultados y avances.\n'
-                      '• “Perfil”: edita tus datos y preferencia de estudio.',
+                      '• “Perfil”: edita tus datos y preferencias.',
                     ),
                     actions: [
                       TextButton(
@@ -248,13 +253,11 @@ class _HeaderAppBarEstudiante extends StatelessWidget
                   ),
                 );
               },
-              icon: const Icon(Icons.help_outline, color: _onPrimary),
+              icon: Icon(Icons.help_outline, color: cs.onPrimary),
             ),
           ],
         ),
       ),
-      backgroundColor: Colors.transparent,
-      surfaceTintColor: Colors.transparent,
     );
   }
 }

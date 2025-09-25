@@ -1,4 +1,3 @@
-// Pantalla de login con validaciones, recuperación de contraseña y verificación de correo.
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../services/auth_service.dart';
@@ -17,10 +16,11 @@ class _LoginScreenState extends State<LoginScreen> {
 
   final _auth = AuthService();
 
+  bool _sendingReset = false;
   bool _loading = false;
   bool _obscure = true;
   bool _easyMode = true; // Modo sencillo por defecto (validación ligera).
-  String? _errorMsg;     // Mensaje de error que aparece en el formulario.
+  String? _errorMsg;      // Mensaje de error que aparece en el formulario.
 
   @override
   void dispose() {
@@ -30,7 +30,7 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
 
-  // Validación del correo.
+  // Lógica de Validación de Correo
   String? _validateEmail(String? v) {
     if (v == null || v.trim().isEmpty) return 'Escribe tu correo';
     final email = v.trim();
@@ -39,10 +39,10 @@ class _LoginScreenState extends State<LoginScreen> {
     return null;
   }
 
-  // Validación de la contraseña (más estricta si easyMode = false).
+  // Lógica de Validación de Contraseña 
   String? _validatePass(String? v) {
     if (v == null || v.isEmpty) return 'Escribe tu contraseña';
-    if (_easyMode) return null;
+    if (_easyMode) return null; // Si está en modo sencillo, solo pide que no esté vacía.
     if (v.length < 8) return 'Mínimo 8 caracteres';
     final upper = RegExp(r'[A-Z]');
     final lower = RegExp(r'[a-z]');
@@ -55,7 +55,7 @@ class _LoginScreenState extends State<LoginScreen> {
     return null;
   }
 
-  // Lógica principal de login con FirebaseAuth.
+  // Lógica Principal de Login y Verificación de Correo
   Future<void> _login() async {
     setState(() => _errorMsg = null);
     if (!_formKey.currentState!.validate()) {
@@ -72,6 +72,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
       // Verifica si el correo ya fue confirmado.
       if (!cred.user!.emailVerified) {
+        // Si no está verificado, enviamos el enlace de nuevo y cerramos la sesión para forzar la verificación.
         await _auth.sendEmailVerification(cred.user!);
         await _auth.signOut();
         await showDialog(
@@ -92,10 +93,10 @@ class _LoginScreenState extends State<LoginScreen> {
         return;
       }
 
+      // Si todo está bien, navegamos a la pantalla principal.
       if (!mounted) return;
       Navigator.pushReplacementNamed(context, '/home');
     } on FirebaseAuthException catch (e) {
-      // Manejo de errores comunes de autenticación.
       String msg;
       switch (e.code) {
         case 'invalid-credential':
@@ -122,23 +123,71 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  // Lógica de recuperación de contraseña.
+  // Lógica de Recuperación de Contraseña
   Future<void> _forgot() async {
+    setState(() => _errorMsg = null);
+
+  
     final email = _emailCtrl.text.trim();
-    if (email.isEmpty) {
-      setState(() => _errorMsg = 'Escribe tu correo arriba para enviarte el enlace.');
+    final emailErr = _validateEmail(email);
+    if (emailErr != null) {
+      setState(() => _errorMsg = emailErr);
       return;
     }
+
+    //Confirmación para evitar envíos accidentales. Muestra un diálogo.
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('¿Enviar enlace de recuperación?'),
+        content: Text('Te enviaremos un correo a:\n$email'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Enviar')),
+        ],
+      ),
+    );
+
+    if (ok != true) return;
+
+    // 3) Envío con loading y manejo de errores específicos de la acción de reset.
+    setState(() => _sendingReset = true);
     try {
-      await FirebaseAuth.instance.sendPasswordResetEmail(email: email);
+      await _auth.sendPasswordResetEmail(email);
+
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Te enviamos un enlace para cambiar tu contraseña')),
+        const SnackBar(content: Text('Listo. Revisa tu correo para cambiar la contraseña.')),
       );
-    } on FirebaseAuthException catch (_) {
-      setState(() => _errorMsg = 'No pudimos enviar el enlace. Revisa el correo.');
+    } on FirebaseAuthException catch (e) {
+      // Manejo de errores específicos del envío del correo de recuperación.
+      String msg;
+      switch (e.code) {
+        case 'invalid-email':
+          msg = 'El correo no tiene un formato válido.';
+          break;
+        case 'user-not-found':
+          msg = 'No existe una cuenta con ese correo.';
+          break;
+        case 'network-request-failed':
+          msg = 'Sin conexión. Inténtalo de nuevo.';
+          break;
+        case 'too-many-requests':
+          msg = 'Demasiados intentos. Espera un momento.';
+          break;
+        default:
+          msg = 'No pudimos enviar el enlace. Inténtalo de nuevo más tarde.';
+      }
+      setState(() => _errorMsg = msg);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+      }
+    } finally {
+      if (mounted) setState(() => _sendingReset = false);
     }
   }
+
+ // El resto del código es la construcción de la interfaz de usuario
 
   @override
   Widget build(BuildContext context) {
@@ -276,27 +325,29 @@ class _LoginScreenState extends State<LoginScreen> {
                               // Botones secundarios: recuperar contraseña y crear cuenta.
                               const SizedBox(height: 8),
                               Row(
-                                children: [
-                                  const Icon(Icons.help_outline, size: 18),
-                                  const SizedBox(width: 6),
-                                  TextButton(
-                                    onPressed: _loading ? null : _forgot,
-                                    child: const Text('Olvidé mi contraseña'),
+                                    children: [
+                                      const SizedBox(width: 6),
+                                      TextButton.icon(
+                                        icon: _sendingReset
+                                            ? const SizedBox(
+                                                height: 16, width: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                                            : const Icon(Icons.mark_email_read_outlined, size: 18), 
+                                        onPressed: (_loading || _sendingReset) ? null : _forgot,
+                                        label: const Text('Olvidé mi contraseña'),
+                                      ),
+                                    ],
                                   ),
-                                ],
-                              ),
-                              Row(
-                                children: [
-                                  const Icon(Icons.person_add_alt_1, size: 18),
-                                  const SizedBox(width: 6),
-                                  TextButton(
-                                    onPressed: _loading
-                                        ? null
-                                        : () => Navigator.pushReplacementNamed(context, '/registro'),
-                                    child: const Text('Crear cuenta nueva'),
+                                  Row(
+                                    children: [
+                                      TextButton.icon(
+                                        icon: const Icon(Icons.person_add_alt_1, size: 19),
+                                        onPressed: _loading
+                                            ? null
+                                            : () => Navigator.pushReplacementNamed(context, '/registro'),
+                                        label: const Text('Crear cuenta nueva'),
+                                      ),
+                                    ],
                                   ),
-                                ],
-                              ),
 
                               const Divider(height: 20),
 

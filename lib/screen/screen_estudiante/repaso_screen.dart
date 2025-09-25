@@ -1,4 +1,3 @@
-// lib/screen/screen_estudiante/repaso_screen.dart
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
@@ -14,40 +13,33 @@ class RepasoScreen extends StatefulWidget {
 }
 
 class _RepasoScreenState extends State<RepasoScreen> {
-  final _ql = QLearningService();      
+  final _ql = QLearningService();
   final _engine = ExerciseEngine();
 
-  // Ejercicio actual
   Exercise? _ex;
 
-  // Estado RL (MDP)
-  String _s = 'muy_basico';            
-  String _a = 'mantener';              
-  String _sPrime = 'muy_basico';       
-  DateTime? _qStart;                   
+  String _s = 'muy_basico';
+  String _a = 'mantener-mantener_obj';
+  String _sPrime = 'muy_basico';
+  int _objetivo = 2;
+  int _objetivoPrime = 2;
 
-  // Sesión
-  int _idx = 0;                       
+  int _idx = 0;
   int _aciertos = 0;
   int _errores = 0;
   final int _max = 10;
   late DateTime _inicio;
 
-  // UI
-  bool _bloqueado = false;             
-  int? _seleccion;                     
+  
+  bool _bloqueado = false;         // Bloquea toda interacción durante feedback
+  int? _seleccion;                // Opción elegida
+  bool _showOverlay = false;       // Muestra “pantallazo” semitransparente
+  Color _overlayColor = Colors.transparent;
 
-  // ---------- Parámetros de recompensa ----------
-  static const int _bonusRapidoSeg = 5;     // <5 s → bonus
-  static const int _lentoSeg = 15;          // >15 s → pequeña penalización
-  static const double _rCorrecto = 1.0;     // base por acierto
-  static const double _rBonusRapido = 0.2;  // bonus por rapidez
-  static const double _rIncorrectoCerca = -0.2; // castigo suave si estuvo cerca (±2)
-  static const double _rIncorrectoLejano = -0.4; // castigo si estuvo lejos
-  static const double _rPenalLento = -0.1;  // penalización suave por tardanza
-  static const int _umbralCercania = 2;     // “cerca” = diferencia ≤ 2
-  static const double _rMax = 1.3, _rMin = -0.5; // clamp para estabilidad
+  static const double _rCorrecto = 1.0;
+  static const double _rIncorrecto = -0.5;
 
+  // inicializa la pantalla y carga los datos guardados del usuario.
   @override
   void initState() {
     super.initState();
@@ -61,134 +53,170 @@ class _RepasoScreenState extends State<RepasoScreen> {
       if (mounted) Navigator.pushReplacementNamed(context, '/login');
       return;
     }
-    // Puedes inicializar _s con un nivel guardado del usuario si quieres.
-    _s = 'muy_basico';
+    final guardado = await _ql.getNivelActual(uid, widget.tema);
+    final objGuardado = await _ql.getObjetivo(uid, widget.tema);
+    _engine.resetPrevExercises(widget.tema); // Reiniciar historial al iniciar
+    setState(() {
+      _s = guardado ?? 'muy_basico';
+      _objetivo = objGuardado ?? 2;
+    });
     await _planificarYSometerSiguiente(uid);
   }
 
-  /// Planifica el próximo paso con el AGENTE (ε-greedy) y genera el ejercicio en s'
+  // usamos el motor de Q-Learning para planificar la siguiente acción y cargar el ejercicio.
   Future<void> _planificarYSometerSiguiente(String uid) async {
-    // 1) El agente elige acción en el estado actual (nivel actual)
-    _a = await _ql.pickAction(uid, widget.tema, _s);
-
-    // 2) Aplicas la acción → nuevo nivel (estado siguiente s')
-    _sPrime = _ql.applyAction(_s, _a);
-
-    // 3) Generas el ejercicio en el NUEVO nivel (s')
-    await _cargarEjercicio(_sPrime);
+    _a = await _ql.pickAction(uid, widget.tema, _s, _objetivo);
+    final result = _ql.applyAction(_s, _objetivo, _a);
+    _sPrime = result['nivel'];
+    _objetivoPrime = result['objetivo'];
+    await _cargarEjercicio(_sPrime, accion: _a);
   }
 
-  Future<void> _cargarEjercicio(String nivel) async {
+  Future<void> _cargarEjercicio(String nivel, {required String accion}) async {
     setState(() {
-      _ex = _engine.generate(widget.tema, nivel);
+      _ex = _engine.generateNextByAction(
+        widget.tema,
+        nivel,
+        accion: _a,
+        objetivo: _objetivoPrime,
+      );
       _bloqueado = false;
       _seleccion = null;
-      _qStart = DateTime.now(); // inicio por pregunta
+      _showOverlay = false;
+      _overlayColor = Colors.transparent;
     });
   }
 
-  // --------- Regla de recompensa inclusiva ----------
-  double _calcularReward({
-    required bool correcto,
-    required int valorUsuario,
-    required int respuestaCorrecta,
-    required int duracionSeg,
-  }) {
-    double r;
-
-    if (correcto) {
-      r = _rCorrecto;
-      if (duracionSeg < _bonusRapidoSeg) r += _rBonusRapido;     // bonus por rapidez
-    } else {
-      final diff = (valorUsuario - respuestaCorrecta).abs();
-      r = (diff <= _umbralCercania) ? _rIncorrectoCerca : _rIncorrectoLejano; // castigos suaves
-    }
-
-    // penalización suave por tardanza (evita alargar sin foco)
-    if (duracionSeg > _lentoSeg) r += _rPenalLento;
-
-    // clamp para mantener rangos estables
-    if (r > _rMax) r = _rMax;
-    if (r < _rMin) r = _rMin;
-
-    return r;
-  }
-
+  // Este bloque maneja la lógica cuando el usuario responde a una pregunta incluyendo el feedback el cálculo de la recompensa y la actualización del modelo de Q-Learning.
   Future<void> _contestar(int valor) async {
     if (_bloqueado || _ex == null) return;
+
+    // Bloquea inmediatamente e ilumina 
     setState(() {
       _bloqueado = true;
       _seleccion = valor;
     });
 
-    final uid = FirebaseAuth.instance.currentUser!.uid;
     final correcto = (valor == _ex!.respuesta);
+    final diff = (valor - _ex!.respuesta).abs();
+    final reward = correcto ? _rCorrecto : (diff <= 2 ? 0.5 : _rIncorrecto);
 
-    final durSeg = _qStart == null
-        ? 0
-        : DateTime.now().difference(_qStart!).inSeconds;
+    if (correcto) _aciertos++; else _errores++;
 
-    // <<< AQUÍ defines premio/castigo >>>
-    final reward = _calcularReward(
-      correcto: correcto,
-      valorUsuario: valor,
-      respuestaCorrecta: _ex!.respuesta,
-      duracionSeg: durSeg,
-    );
+    // Feedback visual inmediato
+    setState(() {
+      _overlayColor = correcto ? Colors.green : Colors.red;
+      _showOverlay = true;
+    });
 
-    // Stats locales
-    if (correcto) {
-      _aciertos++;
-    } else {
-      _errores++;
-    }
-
-    // Bellman update con (s, a, r, s')
+    //Actualiza Q-Learning en paralelo 
+    final uid = FirebaseAuth.instance.currentUser!.uid;
+    final esTerminal = (_idx + 1 >= _max);
     await _ql.updateQ(
       uid: uid,
       tema: widget.tema,
-      s: _s,
+      nivel: _s,
+      objetivo: _objetivo,
       a: _a,
       r: reward,
-      sPrime: _sPrime,
+      nivelPrime: _sPrime,
+      objetivoPrime: _objetivoPrime,
+      terminal: esTerminal,
     );
+    _ql.decayEpsilon();
+    await _ql.setObjetivo(uid, widget.tema, _objetivoPrime);
+    await _ql.setNivelActual(uid, widget.tema, _sPrime);
 
-    // Feedback visual
-    if (mounted) {
-      ScaffoldMessenger.of(context).hideCurrentSnackBar();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            correcto ? '¡Correcto!' : 'Incorrecto. Respuesta: ${_ex!.respuesta}',
-          ),
-          backgroundColor: correcto ? Colors.green : Colors.red,
-          duration: const Duration(milliseconds: 700),
-        ),
-      );
+
+    await Future.delayed(const Duration(milliseconds: 800));
+
+    if (!mounted) return;
+    setState(() {
+      _showOverlay = false; // se desvanece con AnimatedOpacity
+    });
+
+    await Future.delayed(const Duration(milliseconds: 150)); // pequeño fade-out
+
+    if (esTerminal) {
+      await _guardarSesionYMostrarResumen();
+    } else {
+      await _siguiente();
     }
   }
 
+  //avance al siguiente ejercicio o la finalización de la sesión.
   Future<void> _siguiente() async {
-    setState(() => _idx++);
+    setState(() {
+      _idx++;
+    });
 
     if (_idx >= _max) {
       await _guardarSesionYMostrarResumen();
       return;
     }
 
-    // Avanza el proceso de decisión: s ← s'
     _s = _sPrime;
+    _objetivo = _objetivoPrime;
 
-    // Planifica el siguiente paso con el agente
     final uid = FirebaseAuth.instance.currentUser!.uid;
     await _planificarYSometerSiguiente(uid);
   }
 
+  // lógica para aplicar reglas de promoción o descenso basadas en el rendimiento general del usuario.
+  String _nextLevel(String nivel) {
+    const order = ['muy_basico', 'basico', 'medio', 'alto'];
+    final i = order.indexOf(nivel);
+    return i < order.length - 1 ? order[i + 1] : nivel;
+  }
+
+  String _prevLevel(String nivel) {
+    const order = ['muy_basico', 'basico', 'medio', 'alto'];
+    final i = order.indexOf(nivel);
+    return i > 0 ? order[i - 1] : nivel;
+  }
+
+  Future<void> _aplicarReglasNivelPorSesion(String uid, int durSegundos) async {
+    final intentos = (_idx + 1).clamp(1, _max); // cuántos se resolvieron
+    final acc = _aciertos / intentos;
+    final avgSeg = durSegundos / intentos;
+
+    // Nivel base = donde terminaste la sesión según RL
+    String nivelOficial = _sPrime;
+
+    // Sube si domina: >=85% y <=8s por ítem
+    if (acc >= 0.85 && avgSeg <= 8 && nivelOficial != 'alto') {
+      nivelOficial = _nextLevel(nivelOficial);
+    }
+    // Baja si le cuesta: <=60% y >=12s por ítem
+    else if (acc <= 0.60 && avgSeg >= 12 && nivelOficial != 'muy_basico') {
+      nivelOficial = _prevLevel(nivelOficial);
+    }
+    // Sino, se mantiene.
+
+    await FirebaseFirestore.instance.collection('users').doc(uid).set({
+      'progreso': {
+        widget.tema: {
+          'nivelActual': nivelOficial,
+          'actualizadoEn': FieldValue.serverTimestamp(),
+        }
+      }
+    }, SetOptions(merge: true));
+  }
+
+
+  //guarda los datos de la sesión y muestra un resumen al usuario.
   Future<void> _guardarSesionYMostrarResumen() async {
     final uid = FirebaseAuth.instance.currentUser!.uid;
     final dur = DateTime.now().difference(_inicio).inSeconds;
 
-    // Guardado best-effort
+    // 1) Aplica PROMOCIÓN/DESCENSO OFICIAL al cerrar sesión
+    try {
+      await _aplicarReglasNivelPorSesion(uid, dur);
+    } catch (_) {
+      // no hacer nada si falla
+    }
+
+    // Garda resumen de la sesión
     try {
       await FirebaseFirestore.instance.collection('sesiones').add({
         'fecha': FieldValue.serverTimestamp(),
@@ -229,6 +257,7 @@ class _RepasoScreenState extends State<RepasoScreen> {
     );
   }
 
+  // Este bloque contiene la estructura visual de la pantalla
   @override
   Widget build(BuildContext context) {
     if (_ex == null) {
@@ -239,53 +268,72 @@ class _RepasoScreenState extends State<RepasoScreen> {
 
     return Scaffold(
       appBar: AppBar(title: Text('Repaso - ${widget.tema}')),
-      body: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Ejercicio $mostrado/$_max',
-                style: const TextStyle(fontWeight: FontWeight.w600)),
-            const SizedBox(height: 10),
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Text(
-                  _ex!.enunciado,
-                  style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
-                ),
+      body: Stack(
+        children: [
+          // Capa principal
+          IgnorePointer(
+            ignoring: _bloqueado, // bloquea taps durante feedback
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Ejercicio $mostrado/$_max',
+                      style: const TextStyle(fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 10),
+                  Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Text(
+                        _ex!.enunciado,
+                        style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  ..._ex!.opciones.map((o) {
+                    final isSelected = (_seleccion == o);
+                    final isCorrect = (o == _ex!.respuesta);
+                    IconData? trailing;
+                    Color? tileColor;
+
+                    if (_seleccion != null) {
+                      if (isSelected && isCorrect) {
+                        trailing = Icons.check_circle;
+                        tileColor = Colors.green.withOpacity(0.08);
+                      } else if (isSelected && !isCorrect) {
+                        trailing = Icons.cancel;
+                        tileColor = Colors.red.withOpacity(0.08);
+                      } else if (isCorrect) {
+                        trailing = Icons.check;
+                      }
+                    }
+
+                    return Card(
+                      child: ListTile(
+                        tileColor: tileColor,
+                        title: Text(o.toString(), style: const TextStyle(fontSize: 18)),
+                        trailing: trailing != null ? Icon(trailing) : null,
+                        onTap: () => _contestar(o),
+                      ),
+                    );
+                  }),
+                  const Spacer(),
+                ],
               ),
             ),
-            const SizedBox(height: 12),
-            ..._ex!.opciones.map((o) {
-              final esSeleccion = _seleccion == o;
-              final esCorrecta = o == _ex!.respuesta;
+          ),
 
-              Color? tileColor;
-              if (_bloqueado) {
-                if (esCorrecta) tileColor = Colors.green.withOpacity(0.15);
-                if (esSeleccion && !esCorrecta) tileColor = Colors.red.withOpacity(0.15);
-              }
-
-              return Card(
-                color: tileColor,
-                child: ListTile(
-                  title: Text(o.toString(), style: const TextStyle(fontSize: 18)),
-                  onTap: _bloqueado ? null : () => _contestar(o),
-                ),
-              );
-            }),
-            const SizedBox(height: 8),
-            Align(
-              alignment: Alignment.centerRight,
-              child: FilledButton.icon(
-                onPressed: _bloqueado ? _siguiente : null,
-                icon: const Icon(Icons.arrow_forward),
-                label: Text(_idx + 1 >= _max ? 'Finalizar' : 'Siguiente'),
-              ),
+          // Overlay de feedback
+          AnimatedOpacity(
+            opacity: _showOverlay ? 0.35 : 0.0,
+            duration: const Duration(milliseconds: 150),
+            child: IgnorePointer(
+              ignoring: true,
+              child: Container(color: _overlayColor),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }

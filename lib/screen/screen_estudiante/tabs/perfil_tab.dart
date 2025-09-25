@@ -18,6 +18,7 @@ class PerfilTab extends StatefulWidget {
 class _PerfilTabState extends State<PerfilTab> {
   bool _loading = true;
   Map<String, dynamic>? _userData;
+  // ignore: unused_field
   XFile? _picked;
   Uint8List? _preview;
 
