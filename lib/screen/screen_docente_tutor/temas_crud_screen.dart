@@ -98,7 +98,7 @@ class _TemasCrudScreenState extends State<TemasCrudScreen> {
 
               try {
                 if (editMode) {
-                  await _service.actualizarTema(tema!.id, nombre: nombre, concepto: concepto);
+                  await _service.actualizarTema(tema.id, nombre: nombre, concepto: concepto);
                 } else {
                   await _service.crearTema(nombre: nombre, concepto: concepto);
                 }

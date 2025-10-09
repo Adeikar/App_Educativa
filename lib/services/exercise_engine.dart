@@ -1,4 +1,5 @@
 import 'dart:math';
+import 'package:cloud_firestore/cloud_firestore.dart'; 
 
 enum FormatoEnunciado { simbolo, texto }
 
@@ -23,8 +24,8 @@ class Exercise {
 }
 
 class ExerciseEngine {
+  //enunciado en formato con simbolos o en texto
   ExerciseEngine({this.formato = FormatoEnunciado.simbolo});
-
   final FormatoEnunciado formato;
 
   static const niveles = ['muy_basico', 'basico', 'medio', 'alto'];
@@ -43,22 +44,30 @@ class ExerciseEngine {
     'alto': 80,
   };
 
-  /// historial anti-repetición por tema 
-  final Map<String, Set<String>> _usedPairs = {
-    'suma': <String>{},
-    'resta': <String>{},
-    'multiplicacion': <String>{},
-    'conteo': <String>{},
+  final Map<String, Map<String, int>> _usedPairsWithCounter = {
+    'suma': <String, int>{},
+    'resta': <String, int>{},
+    'multiplicacion': <String, int>{},
+    'conteo': <String, int>{},
   };
 
-  /// limita crecimiento del set por si alguien hace sesiones larguísimas
+  // Contador global de ejercicios 
+  final Map<String, int> _exerciseCounter = {
+    'suma': 0,
+    'resta': 0,
+    'multiplicacion': 0,
+    'conteo': 0,
+  };
+
+  static const int _expirationThreshold = 5;
   static const int _maxPairsMem = 500;
 
-  // métodos auxiliares para obtener valores de configuración.
+// Retorna el valor mínimo, máximo tope
   int _min(String nivel) => (_rangos[nivel] ?? [1, 7])[0];
   int _max(String nivel) => (_rangos[nivel] ?? [1, 7])[1];
   int getTopeResultado(String nivel) => _topeResultado[nivel] ?? 14;
 
+  // Retorna el valor del "salto grande" para subir el objetivo (usado por Q-Learning).
   int bigStepAddSub(String nivel) => switch (nivel) {
         'muy_basico' => 3,
         'basico' => 4,
@@ -66,6 +75,7 @@ class ExerciseEngine {
         _ => 6,
       };
 
+  // Retorna el valor del "salto pequeño" para bajar el objetivo (usado por Q-Learning).
   int smallStepAddSub(String nivel) => switch (nivel) {
         'muy_basico' => 2,
         'basico' => 3,
@@ -73,34 +83,59 @@ class ExerciseEngine {
         _ => 5,
       };
 
-  // métodos para gestionar el historial de pares de números ya utilizados.
+  // Crea una clave única para un par de números, independientemente del orden (e.g., 2-5).
   String _pairKey(int a, int b) {
     if (a <= b) return '$a-$b';
     return '$b-$a';
   }
 
+  // Verifica si un par de números fue usado recientemente y no ha "expirado" aún.
   bool _isPairUsed(String tema, int a, int b) {
     final key = _pairKey(a, b);
-    return _usedPairs[tema]?.contains(key) ?? false;
+    final usedPairs = _usedPairsWithCounter[tema]!;
+    
+    if (!usedPairs.containsKey(key)) return false;
+    
+    final whenUsed = usedPairs[key]!;
+    final currentCount = _exerciseCounter[tema]!;
+    
+    // Si la diferencia supera el umbral, el par se considera expirado y se remueve.
+    if (currentCount - whenUsed >= _expirationThreshold) {
+      usedPairs.remove(key);
+      return false;
+    }
+    
+    return true;
   }
 
+  // Marca un par de números como usado con el valor del contador actual.
   void _markPairUsed(String tema, int a, int b) {
     final key = _pairKey(a, b);
-    final set = _usedPairs[tema]!;
-    set.add(key);
-    // control simple de tamaño
-    if (set.length > _maxPairsMem) {
-      // eliminamos los primeros 50 elementos arbitrariamente
-      final toRemove = set.take(50).toList();
+    final usedPairs = _usedPairsWithCounter[tema]!;
+    final currentCount = _exerciseCounter[tema]!;
+    
+    usedPairs[key] = currentCount;
+    
+    // Lógica de limpieza: remueve pares muy viejos si se supera el límite de memoria.
+    if (usedPairs.length > _maxPairsMem) {
+      final toRemove = <String>[];
+      usedPairs.forEach((k, v) {
+        if (currentCount - v > _expirationThreshold * 2) {
+          toRemove.add(k);
+        }
+      });
       for (final k in toRemove) {
-        set.remove(k);
+        usedPairs.remove(k);
       }
     }
   }
 
-  // genera un conjunto de opciones de respuesta, incluyendo la correcta 
+  void _incrementExerciseCounter(String tema) {
+    _exerciseCounter[tema] = (_exerciseCounter[tema] ?? 0) + 1;
+  }
+
+  // Genera una lista de 4 opciones de respuesta, incluyendo la correcta, y las mezcla.
   List<int> _opciones(int correct, {int minVal = 0}) {
-    // 4 opciones numéricas, incluye la correcta y 3 distractores cercanos
     final set = <int>{correct};
     int delta = 1;
     while (set.length < 4) {
@@ -115,7 +150,7 @@ class ExerciseEngine {
     return list;
   }
 
-  // formatea el enunciado de los ejercicios de acuerdo al tipo (símbolo o texto).
+  // Formatea el enunciado 
   String _formatEnunciadoSuma(int a, int b) {
     return formato == FormatoEnunciado.simbolo
         ? '$a + $b = ?'
@@ -134,7 +169,7 @@ class ExerciseEngine {
         : '¿Cuánto es $a por $b?';
   }
 
-  // intenta encontrar un par de números que cumpla con el objetivo para la suma sin repetición.
+  // Intenta encontrar un par de números válidos para una suma que dé un 'target'.
   bool _trySumPair(String nivel, int target, String tema, List<int> out) {
     final lo = _min(nivel), hi = _max(nivel);
     final aValues = List.generate(hi - lo + 1, (i) => lo + i)..shuffle();
@@ -150,7 +185,7 @@ class ExerciseEngine {
     return false;
   }
 
-  // busca un par de números para la suma
+  // Busca un par de números para suma, probando el 'target' y valores cercanos.
   List<int>? _pairForSum(String nivel, int target, String tema) {
     for (final t in [target, target - 1, target + 1, target - 2, target + 2]) {
       if (t < 2 || t > getTopeResultado(nivel)) continue;
@@ -160,7 +195,7 @@ class ExerciseEngine {
     return null;
   }
 
-  // intenta encontrar un par de números para la resta
+  // Intenta encontrar un par de números válidos para una resta que dé una 'diff'.
   bool _tryDiffPair(String nivel, int diff, String tema, List<int> out) {
     final lo = _min(nivel), hi = _max(nivel);
     final bValues = List.generate(hi - lo + 1, (i) => lo + i)..shuffle();
@@ -176,7 +211,7 @@ class ExerciseEngine {
     return false;
   }
 
-  // busca un par para la resta
+  // Busca un par de números para resta, probando la 'diff' y valores cercanos.
   List<int>? _pairForDiff(String nivel, int diff, String tema) {
     final lo = _min(nivel), hi = _max(nivel);
     final maxDiff = hi - lo;
@@ -188,7 +223,7 @@ class ExerciseEngine {
     return null;
   }
 
-  // intenta encontrar un par de números que cumpla con el objetivo de la multiplicación.
+  // Intenta encontrar un par de números válidos para una multiplicación que dé un 'target'.
   bool _tryProductPair(String nivel, int target, String tema, List<int> out) {
     final lo = max(1, _min(nivel)), hi = _max(nivel);
     final aValues = List.generate(hi - lo + 1, (i) => lo + i)..shuffle();
@@ -206,7 +241,7 @@ class ExerciseEngine {
     return false;
   }
 
-  // busca un par para la multiplicación
+  // Busca un par de números para multiplicación, probando el 'target' y valores cercanos.
   List<int>? _pairForProduct(String nivel, int target, String tema) {
     for (final t in [target, target - 1, target + 1, target - 2, target + 2]) {
       if (t < 1 || t > getTopeResultado(nivel)) continue;
@@ -216,26 +251,34 @@ class ExerciseEngine {
     return null;
   }
 
-  // genera un par de números de respaldo si no se encuentra un par ideal.
+  // Función de emergencia: encuentra el par no usado más cercano al 'target'.
   List<int> _fallbackClosestPair(String nivel, String tema, int target) {
     final lo = _min(nivel), hi = _max(nivel);
     final candidates = <List<int>>[];
+    
+    // Rellena los candidatos con todos los pares posibles si es necesario, y resetea el historial si no hay no usados.
     for (int a = lo; a <= hi; a++) {
       for (int b = lo; b <= hi; b++) {
         if (!_isPairUsed(tema, a, b)) candidates.add([a, b]);
       }
     }
+    
     if (candidates.isEmpty) {
-      final a = Random().nextInt(hi - lo + 1) + lo;
-      final b = Random().nextInt(hi - lo + 1) + lo;
-      return [a, b];
+      _usedPairsWithCounter[tema]?.clear();
+      for (int a = lo; a <= hi; a++) {
+        for (int b = lo; b <= hi; b++) {
+          candidates.add([a, b]);
+        }
+      }
     }
+    
+    // Ordena los pares por la diferencia absoluta de su resultado respecto al 'target'.
     candidates.sort((p1, p2) {
       int res1, res2;
       switch (tema) {
         case 'resta':
-          res1 = p1[0] - p1[1];
-          res2 = p2[0] - p2[1];
+          res1 = (p1[0] - p1[1]).abs();
+          res2 = (p2[0] - p2[1]).abs();
           break;
         case 'multiplicacion':
           res1 = p1[0] * p1[1];
@@ -247,18 +290,18 @@ class ExerciseEngine {
       }
       return (res1 - target).abs().compareTo((res2 - target).abs());
     });
+    
     return candidates.first;
   }
 
-  // genera un ejercicio de suma.
+  // Genera un ejercicio de suma basado en el nivel y objetivo deseado.
   Exercise genSuma(String nivel, int objetivo) {
+    _incrementExerciseCounter('suma');
+    
     final tope = getTopeResultado(nivel);
     final tgt = max(2, min(tope, objetivo));
     final pair = _pairForSum(nivel, tgt, 'suma') ?? _fallbackClosestPair(nivel, 'suma', tgt);
-    int a = pair[0], b = pair[1];
-    if (a > b) {
-      final tmp = a; a = b; b = tmp;
-    }
+    final a = pair[0], b = pair[1];
     final res = a + b;
     final ex = Exercise(
       enunciado: _formatEnunciadoSuma(a, b),
@@ -273,8 +316,10 @@ class ExerciseEngine {
     return ex;
   }
 
-  // genera un ejercicio de resta.
+  // Genera un ejercicio de resta basado en el nivel y objetivo deseado (diferencia).
   Exercise genResta(String nivel, int objetivo) {
+    _incrementExerciseCounter('resta');
+    
     final maxDiff = _max(nivel) - _min(nivel);
     final tgt = max(0, min(maxDiff, objetivo));
     final pair = _pairForDiff(nivel, tgt, 'resta') ?? _fallbackClosestPair(nivel, 'resta', tgt);
@@ -296,8 +341,10 @@ class ExerciseEngine {
     return ex;
   }
 
-  // genera un ejercicio de multiplicación.
+  // Genera un ejercicio de multiplicación basado en el nivel y objetivo deseado (producto).
   Exercise genMult(String nivel, int objetivo) {
+    _incrementExerciseCounter('multiplicacion');
+    
     final tope = getTopeResultado(nivel);
     final tgt = max(1, min(tope, objetivo));
     final pair = _pairForProduct(nivel, tgt, 'multiplicacion') ??
@@ -317,7 +364,7 @@ class ExerciseEngine {
     return ex;
   }
 
-  // genera un ejercicio de conteo con estrellas (⭐).
+  // Repite un emoji una cantidad 'n' de veces.
   String _repeatEmoji(String emoji, int n) {
     final buf = StringBuffer();
     for (var i = 0; i < n; i++) {
@@ -326,7 +373,10 @@ class ExerciseEngine {
     return buf.toString();
   }
 
+  // Genera un ejercicio de conteo de figuras.
   Exercise genConteo(String nivel, int objetivo) {
+    _incrementExerciseCounter('conteo');
+    
     final maxV = switch (nivel) {
       'muy_basico' => 7,
       'basico'     => 12,
@@ -334,13 +384,26 @@ class ExerciseEngine {
       _            => 20,
     };
 
-    final tgt = objetivo.clamp(1, maxV);
+    // Lógica para seleccionar un número objetivo no usado recientemente.
+    int tgt = objetivo.clamp(1, maxV);
+    
+    final candidates = <int>[];
+    for (int candidate = max(1, tgt - 2); candidate <= min(maxV, tgt + 2); candidate++) {
+      if (!_isPairUsed('conteo', candidate, 1)) {
+        candidates.add(candidate);
+      }
+    }
+    
+    // Si no hay candidatos, resetea el historial.
+    if (candidates.isNotEmpty) {
+      tgt = candidates[Random().nextInt(candidates.length)];
+    } else {
+      _usedPairsWithCounter['conteo']?.clear();
+    }
 
-    // objeto fijo: estrellas
     const emoji = '⭐';
-
     final figuras = _repeatEmoji(emoji, tgt);
-    final enunciado = 'cuenta las $emoji:\n$figuras';
+    final enunciado = 'Cuenta las $emoji:\n$figuras';
 
     final ex = Exercise(
       enunciado: enunciado,
@@ -355,17 +418,13 @@ class ExerciseEngine {
     return ex;
   }
 
-  // selecciona y genera el siguiente ejercicio según el tema, nivel y la acción de q-learning.
+  // Función principal: genera el siguiente ejercicio ajustando el objetivo según la acción del Q-Learning.
   Exercise generateNextByAction(
     String tema,
     String nivel, {
     required String accion,
     required int objetivo,
   }) {
-    if (!['suma', 'resta', 'multiplicacion', 'conteo'].contains(tema)) {
-      throw ArgumentError('tema no válido: $tema');
-    }
-
     final tope = getTopeResultado(nivel);
     final maxDiff = _max(nivel) - _min(nivel);
     int tgt = tema == 'resta' ? objetivo.clamp(0, maxDiff) : objetivo.clamp(1, tope);
@@ -373,11 +432,13 @@ class ExerciseEngine {
     final parts = accion.split('-');
     final accionObj = parts.length > 1 ? parts[1] : 'mantener_obj';
 
+    // Se actualiza el 'target' (tgt) del objetivo según la acciónObj y los saltos definidos.
     switch (accionObj) {
       case 'subir_obj':
         tgt = min(tema == 'resta' ? maxDiff : tope, objetivo + bigStepAddSub(nivel));
         break;
       case 'bajar_obj':
+        // Asegura que el objetivo no baje de 0 para resta, o de 1 para otros temas.
         tgt = max(tema == 'resta' ? 0 : 1, objetivo - smallStepAddSub(nivel));
         break;
       case 'mantener_obj':
@@ -385,6 +446,7 @@ class ExerciseEngine {
         break;
     }
 
+    // Llama a la función de generación específica para el tema.
     switch (tema) {
       case 'suma':
         return genSuma(nivel, tgt);
@@ -399,8 +461,63 @@ class ExerciseEngine {
     }
   }
 
-  // resetea el historial de ejercicios no repetidos para un tema específico.
+  // Restablece el historial de pares usados y el contador para un tema.
   void resetPrevExercises(String tema) {
-    _usedPairs[tema]?.clear();
+    _usedPairsWithCounter[tema]?.clear();
+    _exerciseCounter[tema] = 0;
+  }
+
+  // Carga el historial de pares de ejercicios usados por el usuario desde Firestore.
+  Future<void> loadUsedPairs(String uid, String tema) async {
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection('usuarios')
+          .doc(uid)
+          .get();
+      
+      final data = doc.data();
+      final recientes = data?['ejerciciosRecientes'] as Map<String, dynamic>?;
+      final temaPairs = recientes?[tema] as Map<String, dynamic>?;
+      
+      if (temaPairs != null) {
+        final loadedPairs = <String, int>{};
+        temaPairs.forEach((key, value) {
+          if (value is int) {
+            loadedPairs[key] = value;
+          }
+        });
+        
+        _usedPairsWithCounter[tema] = loadedPairs;
+        
+        final maxCounter = loadedPairs.values.isEmpty 
+             ? 0 
+             : loadedPairs.values.reduce((a, b) => a > b ? a : b);
+        _exerciseCounter[tema] = maxCounter;
+      } else {
+
+      }
+    } catch (__) {
+
+    }
+  }
+
+  // Guarda el historial de pares de ejercicios usados por el usuario en Firestore.
+  Future<void> saveUsedPairs(String uid, String tema) async {
+    try {
+      final pairs = _usedPairsWithCounter[tema] ?? {};
+      
+      await FirebaseFirestore.instance
+          .collection('usuarios')
+          .doc(uid)
+          .set({
+        'ejerciciosRecientes': {
+          tema: pairs,
+        },
+        'actualizadoEn': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+
+    } catch (__) {
+
+    }
   }
 }

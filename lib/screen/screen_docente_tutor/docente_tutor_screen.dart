@@ -1,14 +1,34 @@
-// Pantalla principal Docente/Tutor/Admin con pestañas y “Solicitudes” visible solo para admin/director.
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'dart:async';
-
 import 'tabs/docente_inicio_tab.dart';
 import 'tabs/docente_reportes_tab.dart';
 import 'tabs/docente_notificaciones_tab.dart';
 import 'tabs/docente_perfil_tab.dart';
 import 'tabs/docentes_solicitudes_tab.dart';
+
+// ===== Contador de solicitudes pendientes (fuera de la clase) =====
+Stream<int> _solicitudesPendientesCountStream() {
+  return FirebaseFirestore.instance
+      .collection('solicitudes_docente')
+      .where('estado', isEqualTo: 'pendiente')
+      .snapshots()
+      .map((snap) => snap.size);
+}
+
+// ===== Contador de notificaciones no leídas (fuera de la clase) =====
+Stream<int> _unreadCountStream() {
+  final uid = FirebaseAuth.instance.currentUser?.uid;
+  if (uid == null) return Stream<int>.value(0);
+
+  return FirebaseFirestore.instance
+      .collection('notificaciones')
+      .where('destinatarioId', isEqualTo: uid)
+      .where('leida', isEqualTo: false)
+      .snapshots()
+      .map((snap) => snap.size);
+}
 
 class DocenteTutorScreen extends StatefulWidget {
   final String? nombre;
@@ -71,6 +91,53 @@ class _DocenteTutorScreenState extends State<DocenteTutorScreen>
     });
   }
 
+  // ===== Destination con Badge para "Avisos" =====
+  NavigationDestination _avisosDestination() {
+    Widget withBadge(Icon base) {
+      return StreamBuilder<int>(
+        stream: _unreadCountStream(),
+        builder: (context, snap) {
+          final c = snap.data ?? 0;
+          return Badge(
+            isLabelVisible: c > 0,
+            label: Text(c > 99 ? '99+' : '$c'),
+            child: base,
+          );
+        },
+      );
+    }
+
+    return NavigationDestination(
+      icon: withBadge(const Icon(Icons.notifications_outlined)),
+      selectedIcon: withBadge(const Icon(Icons.notifications)),
+      label: 'Avisos',
+    );
+  }
+
+  // ===== Destination con Badge para "Solicitudes" (SOLO admin) =====
+  NavigationDestination _solicitudesDestination() {
+    Widget withBadge(Icon base) {
+      return StreamBuilder<int>(
+        stream: _solicitudesPendientesCountStream(),
+        builder: (context, snap) {
+          final c = snap.data ?? 0;
+          return Badge(
+            isLabelVisible: c > 0,
+            label: Text(c > 99 ? '99+' : '$c'),
+            backgroundColor: Colors.orange, // Color diferente para solicitudes
+            child: base,
+          );
+        },
+      );
+    }
+
+    return NavigationDestination(
+      icon: withBadge(const Icon(Icons.assignment_turned_in_outlined)),
+      selectedIcon: withBadge(const Icon(Icons.assignment_turned_in)),
+      label: 'Solicitudes',
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final user = FirebaseAuth.instance.currentUser;
@@ -102,17 +169,8 @@ class _DocenteTutorScreenState extends State<DocenteTutorScreen>
         selectedIcon: Icon(Icons.assessment),
         label: 'Reportes',
       ),
-      const NavigationDestination(
-        icon: Icon(Icons.notifications_outlined),
-        selectedIcon: Icon(Icons.notifications),
-        label: 'Avisos',
-      ),
-      if (_isAdmin)
-        const NavigationDestination(
-          icon: Icon(Icons.assignment_turned_in_outlined),
-          selectedIcon: Icon(Icons.assignment_turned_in),
-          label: 'Solicitudes',
-        ),
+      _avisosDestination(), // Badge rojo para notificaciones
+      if (_isAdmin) _solicitudesDestination(), // Badge naranja para solicitudes
       const NavigationDestination(
         icon: Icon(Icons.person_outline),
         selectedIcon: Icon(Icons.person),

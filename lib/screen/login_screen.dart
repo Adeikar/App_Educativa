@@ -55,73 +55,75 @@ class _LoginScreenState extends State<LoginScreen> {
     return null;
   }
 
-  // Lógica Principal de Login y Verificación de Correo
-  Future<void> _login() async {
-    setState(() => _errorMsg = null);
-    if (!_formKey.currentState!.validate()) {
-      setState(() => _errorMsg = 'Revisa lo que falta arriba.');
+  /// Lógica Principal de Login y Verificación de Correo
+Future<void> _login() async {
+  setState(() => _errorMsg = null);
+  if (!_formKey.currentState!.validate()) {
+    setState(() => _errorMsg = 'Revisa lo que falta arriba.');
+    return;
+  }
+
+  setState(() => _loading = true);
+  final email = _emailCtrl.text.trim();
+  final pass  = _passCtrl.text;
+
+  try {
+
+    
+    final cred = await _auth.signIn(email, pass);
+
+    // Verifica si el correo ya fue confirmado.
+    if (!cred.user!.emailVerified) {
+      // Si no está verificado, enviamos el enlace de nuevo y cerramos la sesión para forzar la verificación.
+      await _auth.sendEmailVerification(cred.user!);
+      await _auth.signOut();
+      await showDialog(
+        context: context,
+        builder: (_) => AlertDialog(
+          title: const Text('Verifica tu correo'),
+          content: Text(
+            'Te enviamos un enlace a:\n$email\n\nAbre el correo y vuelve a iniciar sesión.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Entendido'),
+            ),
+          ],
+        ),
+      );
       return;
     }
 
-    setState(() => _loading = true);
-    final email = _emailCtrl.text.trim();
-    final pass  = _passCtrl.text;
-
-    try {
-      final cred = await _auth.signIn(email, pass);
-
-      // Verifica si el correo ya fue confirmado.
-      if (!cred.user!.emailVerified) {
-        // Si no está verificado, enviamos el enlace de nuevo y cerramos la sesión para forzar la verificación.
-        await _auth.sendEmailVerification(cred.user!);
-        await _auth.signOut();
-        await showDialog(
-          context: context,
-          builder: (_) => AlertDialog(
-            title: const Text('Verifica tu correo'),
-            content: Text(
-              'Te enviamos un enlace a:\n$email\n\nAbre el correo y vuelve a iniciar sesión.',
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('Entendido'),
-              ),
-            ],
-          ),
-        );
-        return;
-      }
-
-      // Si todo está bien, navegamos a la pantalla principal.
-      if (!mounted) return;
-      Navigator.pushReplacementNamed(context, '/home');
-    } on FirebaseAuthException catch (e) {
-      String msg;
-      switch (e.code) {
-        case 'invalid-credential':
-        case 'user-not-found':
-        case 'wrong-password':
-          msg = 'Correo o contraseña incorrectos';
-          break;
-        case 'user-disabled':
-          msg = 'Tu cuenta está deshabilitada';
-          break;
-        case 'too-many-requests':
-          msg = 'Demasiados intentos. Espera un momento';
-          break;
-        case 'network-request-failed':
-          msg = 'Sin internet. Reintenta';
-          break;
-        default:
-          msg = 'No pudimos iniciar sesión';
-      }
-      setState(() => _errorMsg = msg);
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
-    } finally {
-      if (mounted) setState(() => _loading = false);
+    // Si todo está bien, navegamos a la pantalla principal.
+    if (!mounted) return;
+    Navigator.pushReplacementNamed(context, '/home');
+  } on FirebaseAuthException catch (e) {
+    String msg;
+    switch (e.code) {
+      case 'invalid-credential':
+      case 'user-not-found':
+      case 'wrong-password':
+        msg = 'Correo o contraseña incorrectos';
+        break;
+      case 'user-disabled':
+        msg = 'Tu cuenta está deshabilitada';
+        break;
+      case 'too-many-requests':
+        msg = 'Demasiados intentos. Espera un momento';
+        break;
+      case 'network-request-failed':
+        msg = 'Sin internet. Reintenta';
+        break;
+      default:
+        msg = 'No pudimos iniciar sesión';
     }
+    setState(() => _errorMsg = msg);
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+  } finally {
+    if (mounted) setState(() => _loading = false);
   }
+}
 
   // Lógica de Recuperación de Contraseña
   Future<void> _forgot() async {

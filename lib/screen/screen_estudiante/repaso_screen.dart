@@ -1,8 +1,10 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_tts/flutter_tts.dart';
 import '../../services/q_learning_service.dart';
 import '../../services/exercise_engine.dart';
+import 'package:app_aprendizaje/services/notification_service.dart';
 
 class RepasoScreen extends StatefulWidget {
   final String tema;
@@ -12,12 +14,12 @@ class RepasoScreen extends StatefulWidget {
   State<RepasoScreen> createState() => _RepasoScreenState();
 }
 
-class _RepasoScreenState extends State<RepasoScreen> {
-  final _ql = QLearningService();
-  final _engine = ExerciseEngine();
+class _RepasoScreenState extends State<RepasoScreen> with TickerProviderStateMixin {
+  final ExerciseEngine _engine = ExerciseEngine();
+  late final QLearningService _ql;
+  final FlutterTts _flutterTts = FlutterTts();
 
   Exercise? _ex;
-
   String _s = 'muy_basico';
   String _a = 'mantener-mantener_obj';
   String _sPrime = 'muy_basico';
@@ -30,21 +32,57 @@ class _RepasoScreenState extends State<RepasoScreen> {
   final int _max = 10;
   late DateTime _inicio;
 
-  
-  bool _bloqueado = false;         // Bloquea toda interacción durante feedback
-  int? _seleccion;                // Opción elegida
-  bool _showOverlay = false;       // Muestra “pantallazo” semitransparente
+  bool _bloqueado = false;
+  int? _seleccion;
+  bool _showOverlay = false;
   Color _overlayColor = Colors.transparent;
+  bool _showCelebration = false;
+  
+  late AnimationController _progressController;
+  late AnimationController _celebrationController;
+  late AnimationController _shakeController;
+  late Animation<double> _shakeAnimation;
 
-  static const double _rCorrecto = 1.0;
-  static const double _rIncorrecto = -0.5;
-
-  // inicializa la pantalla y carga los datos guardados del usuario.
   @override
   void initState() {
+    _ql = QLearningService(engine: _engine);
     super.initState();
     _inicio = DateTime.now();
+    _initializeTts();
+    _initializeAnimations();
     _cargarPrimero();
+  }
+
+  Future<void> _initializeTts() async {
+    await _flutterTts.setLanguage("es-ES");
+    await _flutterTts.setSpeechRate(0.8);
+    await _flutterTts.setVolume(1.0);
+    await _flutterTts.setPitch(1.1);
+  }
+
+  void _initializeAnimations() {
+    _progressController = AnimationController(
+      duration: const Duration(milliseconds: 800),
+      vsync: this,
+    );
+
+    _celebrationController = AnimationController(
+      duration: const Duration(milliseconds: 1500),
+      vsync: this,
+    );
+
+    _shakeController = AnimationController(
+      duration: const Duration(milliseconds: 500),
+      vsync: this,
+    );
+
+    _shakeAnimation = Tween<double>(begin: 0, end: 10).animate(
+      CurvedAnimation(parent: _shakeController, curve: Curves.elasticIn),
+    );
+  }
+
+  Future<void> _speak(String text) async {
+    await _flutterTts.speak(text);
   }
 
   Future<void> _cargarPrimero() async {
@@ -53,17 +91,21 @@ class _RepasoScreenState extends State<RepasoScreen> {
       if (mounted) Navigator.pushReplacementNamed(context, '/login');
       return;
     }
+    
+    await _engine.loadUsedPairs(uid, widget.tema);
+    await _ql.getEpsilon(uid, widget.tema);
+    
     final guardado = await _ql.getNivelActual(uid, widget.tema);
     final objGuardado = await _ql.getObjetivo(uid, widget.tema);
-    _engine.resetPrevExercises(widget.tema); // Reiniciar historial al iniciar
+    
     setState(() {
       _s = guardado ?? 'muy_basico';
       _objetivo = objGuardado ?? 2;
     });
+    
     await _planificarYSometerSiguiente(uid);
   }
 
-  // usamos el motor de Q-Learning para planificar la siguiente acción y cargar el ejercicio.
   Future<void> _planificarYSometerSiguiente(String uid) async {
     _a = await _ql.pickAction(uid, widget.tema, _s, _objetivo);
     final result = _ql.applyAction(_s, _objetivo, _a);
@@ -84,14 +126,14 @@ class _RepasoScreenState extends State<RepasoScreen> {
       _seleccion = null;
       _showOverlay = false;
       _overlayColor = Colors.transparent;
+      _showCelebration = false;
     });
+    _progressController.forward(from: 0);
   }
 
-  // Este bloque maneja la lógica cuando el usuario responde a una pregunta incluyendo el feedback el cálculo de la recompensa y la actualización del modelo de Q-Learning.
   Future<void> _contestar(int valor) async {
     if (_bloqueado || _ex == null) return;
 
-    // Bloquea inmediatamente e ilumina 
     setState(() {
       _bloqueado = true;
       _seleccion = valor;
@@ -99,19 +141,45 @@ class _RepasoScreenState extends State<RepasoScreen> {
 
     final correcto = (valor == _ex!.respuesta);
     final diff = (valor - _ex!.respuesta).abs();
-    final reward = correcto ? _rCorrecto : (diff <= 2 ? 0.5 : _rIncorrecto);
+    
+    double reward;
+    
+    if (correcto) {
+      double baseReward = 1.0;
+      final tope = _engine.getTopeResultado(_sPrime);
+      final bonusDificultad = (_objetivoPrime / tope) * 0.5;
+      reward = baseReward + bonusDificultad;
+        
+      _aciertos++;
+      setState(() {
+        _overlayColor = Colors.green;
+        _showOverlay = true;
+        _showCelebration = true;
+      });
+      _celebrationController.forward(from: 0);
+      await _speak("¡Muy bien! Correcto");
+      
+    } else {
+      if (diff == 1) {
+        reward = 0.3;
+      } else if (diff == 2) {
+        reward = 0.0;
+      } else {
+        reward = -0.3;
+      }
+      
+      _errores++;
+      setState(() {
+        _overlayColor = Colors.red;
+        _showOverlay = true;
+      });
+      _shakeController.forward(from: 0);
+      await _speak("Ups, la respuesta correcta es ${_ex!.respuesta}");
+    }
 
-    if (correcto) _aciertos++; else _errores++;
-
-    // Feedback visual inmediato
-    setState(() {
-      _overlayColor = correcto ? Colors.green : Colors.red;
-      _showOverlay = true;
-    });
-
-    //Actualiza Q-Learning en paralelo 
     final uid = FirebaseAuth.instance.currentUser!.uid;
     final esTerminal = (_idx + 1 >= _max);
+    
     await _ql.updateQ(
       uid: uid,
       tema: widget.tema,
@@ -123,19 +191,21 @@ class _RepasoScreenState extends State<RepasoScreen> {
       objetivoPrime: _objetivoPrime,
       terminal: esTerminal,
     );
-    _ql.decayEpsilon();
+    
+    await _ql.decayEpsilon(uid, widget.tema);
     await _ql.setObjetivo(uid, widget.tema, _objetivoPrime);
     await _ql.setNivelActual(uid, widget.tema, _sPrime);
+    await _guardarContadorAccion(uid);
 
-
-    await Future.delayed(const Duration(milliseconds: 800));
+    await Future.delayed(const Duration(milliseconds: 1800));
 
     if (!mounted) return;
     setState(() {
-      _showOverlay = false; // se desvanece con AnimatedOpacity
+      _showOverlay = false;
+      _showCelebration = false;
     });
 
-    await Future.delayed(const Duration(milliseconds: 150)); // pequeño fade-out
+    await Future.delayed(const Duration(milliseconds: 150));
 
     if (esTerminal) {
       await _guardarSesionYMostrarResumen();
@@ -144,7 +214,33 @@ class _RepasoScreenState extends State<RepasoScreen> {
     }
   }
 
-  //avance al siguiente ejercicio o la finalización de la sesión.
+  Future<void> _guardarContadorAccion(String uid) async {
+
+      final doc = await FirebaseFirestore.instance
+          .collection('usuarios')
+          .doc(uid)
+          .get();
+      
+      final data = doc.data();
+      final progreso = data?['progreso'] as Map<String, dynamic>?;
+      final temaProg = progreso?[widget.tema] as Map<String, dynamic>?;
+      final ultimaAccion = temaProg?['ultimaAccion'] as String?;
+      
+      final vecesRepetida = (ultimaAccion == _a) 
+          ? ((temaProg?['vecesRepetidaAccion'] as int? ?? 0) + 1)
+          : 1;
+
+      await FirebaseFirestore.instance.collection('usuarios').doc(uid).set({
+        'progreso': {
+          widget.tema: {
+            'ultimaAccion': _a,
+            'vecesRepetidaAccion': vecesRepetida,
+            'actualizadoEn': FieldValue.serverTimestamp(),
+          }
+        }
+      }, SetOptions(merge: true));
+  }
+
   Future<void> _siguiente() async {
     setState(() {
       _idx++;
@@ -160,63 +256,20 @@ class _RepasoScreenState extends State<RepasoScreen> {
 
     final uid = FirebaseAuth.instance.currentUser!.uid;
     await _planificarYSometerSiguiente(uid);
-  }
-
-  // lógica para aplicar reglas de promoción o descenso basadas en el rendimiento general del usuario.
-  String _nextLevel(String nivel) {
-    const order = ['muy_basico', 'basico', 'medio', 'alto'];
-    final i = order.indexOf(nivel);
-    return i < order.length - 1 ? order[i + 1] : nivel;
-  }
-
-  String _prevLevel(String nivel) {
-    const order = ['muy_basico', 'basico', 'medio', 'alto'];
-    final i = order.indexOf(nivel);
-    return i > 0 ? order[i - 1] : nivel;
-  }
-
-  Future<void> _aplicarReglasNivelPorSesion(String uid, int durSegundos) async {
-    final intentos = (_idx + 1).clamp(1, _max); // cuántos se resolvieron
-    final acc = _aciertos / intentos;
-    final avgSeg = durSegundos / intentos;
-
-    // Nivel base = donde terminaste la sesión según RL
-    String nivelOficial = _sPrime;
-
-    // Sube si domina: >=85% y <=8s por ítem
-    if (acc >= 0.85 && avgSeg <= 8 && nivelOficial != 'alto') {
-      nivelOficial = _nextLevel(nivelOficial);
+    
+    if (_ex != null) {
+      await _speak("Ejercicio ${_idx + 1}. ${_ex!.enunciado}");
     }
-    // Baja si le cuesta: <=60% y >=12s por ítem
-    else if (acc <= 0.60 && avgSeg >= 12 && nivelOficial != 'muy_basico') {
-      nivelOficial = _prevLevel(nivelOficial);
-    }
-    // Sino, se mantiene.
-
-    await FirebaseFirestore.instance.collection('users').doc(uid).set({
-      'progreso': {
-        widget.tema: {
-          'nivelActual': nivelOficial,
-          'actualizadoEn': FieldValue.serverTimestamp(),
-        }
-      }
-    }, SetOptions(merge: true));
   }
 
-
-  //guarda los datos de la sesión y muestra un resumen al usuario.
   Future<void> _guardarSesionYMostrarResumen() async {
     final uid = FirebaseAuth.instance.currentUser!.uid;
     final dur = DateTime.now().difference(_inicio).inSeconds;
 
-    // 1) Aplica PROMOCIÓN/DESCENSO OFICIAL al cerrar sesión
     try {
-      await _aplicarReglasNivelPorSesion(uid, dur);
-    } catch (_) {
-      // no hacer nada si falla
-    }
+      await _engine.saveUsedPairs(uid, widget.tema);
+    } catch (__) {}
 
-    // Garda resumen de la sesión
     try {
       await FirebaseFirestore.instance.collection('sesiones').add({
         'fecha': FieldValue.serverTimestamp(),
@@ -227,114 +280,512 @@ class _RepasoScreenState extends State<RepasoScreen> {
         'errores': _errores,
       });
     } catch (_) {}
+    // ===== NUEVO: Enviar notificación a docentes/tutores =====
+  try {
+    final userDoc = await FirebaseFirestore.instance.collection('usuarios').doc(uid).get();
+    final userName = userDoc.data()?['nombre'] ?? 'Estudiante';
+    
+    final notifService = NotificationService();
+    await notifService.notificarSesionCompletada(
+      estudianteId: uid,
+      estudianteNombre: userName,
+      tema: widget.tema,
+      aciertos: _aciertos,
+      errores: _errores,
+      duracion: dur,
+    );
+  } catch (e) {
+    print('⚠️ Error enviando notificación: $e');
+  }
 
     if (!mounted) return;
     final min = dur ~/ 60;
     final seg = dur % 60;
+    final porcentaje = ((_aciertos / _max) * 100).round();
+
+    String mensaje = '';
+    if (porcentaje >= 90) {
+      mensaje = '¡Excelente trabajo! Obtuviste $_aciertos respuestas correctas';
+    } else if (porcentaje >= 70) {
+      mensaje = '¡Muy bien! Lograste $_aciertos respuestas correctas';
+    } else {
+      mensaje = 'Buen intento. Sigue practicando';
+    }
+    await _speak(mensaje);
 
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (_) => AlertDialog(
-        title: const Text('¡Sesión completada!'),
-        content: Column(
+      builder: (_) => _buildSummaryDialog(min, seg, porcentaje),
+    );
+  }
+
+  Widget _buildSummaryDialog(int min, int seg, int porcentaje) {
+    final temaConfig = _getTemaConfig(widget.tema);
+    
+    return Dialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+      child: Container(
+        padding: const EdgeInsets.all(24),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(24),
+          gradient: LinearGradient(
+            colors: [Colors.white, temaConfig.color.withOpacity(0.1)],
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+          ),
+        ),
+        child: Column(
           mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Tema: ${widget.tema}'),
-            Text('Tiempo: ${min > 0 ? '$min min ' : ''}$seg s'),
-            Text('Aciertos: $_aciertos'),
-            Text('Errores: $_errores'),
+            Container(
+              width: 100,
+              height: 100,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: LinearGradient(
+                  colors: [temaConfig.color, temaConfig.color.withOpacity(0.7)],
+                ),
+              ),
+              child: Icon(
+                porcentaje >= 70 ? Icons.emoji_events : Icons.thumb_up,
+                size: 50,
+                color: Colors.white,
+              ),
+            ),
+            const SizedBox(height: 20),
+            Text(
+              porcentaje >= 90
+                  ? '¡EXCELENTE!'
+                  : porcentaje >= 70
+                      ? '¡MUY BIEN!'
+                      : '¡BUEN INTENTO!',
+              style: TextStyle(
+                fontSize: 28,
+                fontWeight: FontWeight.bold,
+                color: temaConfig.color,
+              ),
+            ),
+            const SizedBox(height: 20),
+            _buildStatRow(Icons.check_circle, 'Correctas', '$_aciertos/$_max', Colors.green),
+            _buildStatRow(Icons.cancel, 'Incorrectas', '$_errores/$_max', Colors.red),
+            _buildStatRow(Icons.timer, 'Tiempo', '${min > 0 ? '$min min ' : ''}$seg s', Colors.blue),
+            _buildStatRow(Icons.percent, 'Porcentaje', '$porcentaje%', temaConfig.color),
+            const SizedBox(height: 24),
+            Container(
+              width: double.infinity,
+              height: 60,
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [temaConfig.color, temaConfig.color.withOpacity(0.8)],
+                ),
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  onTap: () => Navigator.popUntil(context, ModalRoute.withName('/home')),
+                  borderRadius: BorderRadius.circular(16),
+                  child: const Center(
+                    child: Text(
+                      'VOLVER AL INICIO',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 1.2,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
           ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.popUntil(context, ModalRoute.withName('/home')),
-            child: const Text('Volver al inicio'),
+      ),
+    );
+  }
+
+  Widget _buildStatRow(IconData icon, String label, String value, Color color) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Icon(icon, color: color, size: 24),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Text(
+              label,
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
+            ),
+          ),
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+              color: color,
+            ),
           ),
         ],
       ),
     );
   }
 
-  // Este bloque contiene la estructura visual de la pantalla
+  @override
+  void dispose() {
+    _flutterTts.stop();
+    _progressController.dispose();
+    _celebrationController.dispose();
+    _shakeController.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_ex == null) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator(strokeWidth: 6)),
+      );
     }
 
     final mostrado = (_idx + 1 <= _max) ? (_idx + 1) : _max;
+    final progreso = mostrado / _max;
+    final temaConfig = _getTemaConfig(widget.tema);
 
     return Scaffold(
-      appBar: AppBar(title: Text('Repaso - ${widget.tema}')),
       body: Stack(
         children: [
-          // Capa principal
-          IgnorePointer(
-            ignoring: _bloqueado, // bloquea taps durante feedback
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Ejercicio $mostrado/$_max',
-                      style: const TextStyle(fontWeight: FontWeight.w600)),
-                  const SizedBox(height: 10),
-                  Card(
-                    child: Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Text(
-                        _ex!.enunciado,
-                        style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  ..._ex!.opciones.map((o) {
-                    final isSelected = (_seleccion == o);
-                    final isCorrect = (o == _ex!.respuesta);
-                    IconData? trailing;
-                    Color? tileColor;
-
-                    if (_seleccion != null) {
-                      if (isSelected && isCorrect) {
-                        trailing = Icons.check_circle;
-                        tileColor = Colors.green.withOpacity(0.08);
-                      } else if (isSelected && !isCorrect) {
-                        trailing = Icons.cancel;
-                        tileColor = Colors.red.withOpacity(0.08);
-                      } else if (isCorrect) {
-                        trailing = Icons.check;
-                      }
-                    }
-
-                    return Card(
-                      child: ListTile(
-                        tileColor: tileColor,
-                        title: Text(o.toString(), style: const TextStyle(fontSize: 18)),
-                        trailing: trailing != null ? Icon(trailing) : null,
-                        onTap: () => _contestar(o),
-                      ),
-                    );
-                  }),
-                  const Spacer(),
+          Container(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [
+                  temaConfig.color.withOpacity(0.1),
+                  Colors.white,
                 ],
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
               ),
             ),
           ),
 
-          // Overlay de feedback
+          SafeArea(
+            child: Column(
+              children: [
+                _buildHeader(mostrado, progreso, temaConfig),
+
+                Expanded(
+                  child: IgnorePointer(
+                    ignoring: _bloqueado,
+                    child: SingleChildScrollView(
+                      padding: const EdgeInsets.all(20),
+                      child: Column(
+                        children: [
+                          AnimatedBuilder(
+                            animation: _shakeAnimation,
+                            builder: (context, child) {
+                              return Transform.translate(
+                                offset: Offset(_shakeAnimation.value, 0),
+                                child: child,
+                              );
+                            },
+                            child: _buildQuestionCard(temaConfig),
+                          ),
+
+                          const SizedBox(height: 24),
+
+                          ..._ex!.opciones.map((o) => _buildOptionCard(o, temaConfig)),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+
           AnimatedOpacity(
-            opacity: _showOverlay ? 0.35 : 0.0,
+            opacity: _showOverlay ? 0.4 : 0.0,
             duration: const Duration(milliseconds: 150),
             child: IgnorePointer(
               ignoring: true,
               child: Container(color: _overlayColor),
             ),
           ),
+
+          if (_showCelebration) _buildCelebrationOverlay(),
         ],
       ),
     );
   }
+
+  Widget _buildHeader(int mostrado, double progreso, _TemaConfig config) {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              IconButton(
+                icon: const Icon(Icons.arrow_back, size: 28),
+                onPressed: () => Navigator.pop(context),
+              ),
+              Expanded(
+                child: Column(
+                  children: [
+                    Text(
+                      widget.tema.toUpperCase(),
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                        color: config.color,
+                      ),
+                    ),
+                    Text(
+                      'Ejercicio $mostrado/$_max',
+                      style: const TextStyle(fontSize: 16, color: Colors.grey),
+                    ),
+                  ],
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.volume_up, size: 28),
+                color: config.color,
+                onPressed: () => _speak(_ex!.enunciado),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Stack(
+            children: [
+              Container(
+                height: 12,
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade200,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 500),
+                height: 12,
+                width: MediaQuery.of(context).size.width * progreso,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [config.color, config.color.withOpacity(0.7)],
+                  ),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            children: [
+              _buildScoreBadge(Icons.check_circle, _aciertos, Colors.green),
+              _buildScoreBadge(Icons.cancel, _errores, Colors.red),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildScoreBadge(IconData icon, int count, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, color: color, size: 20),
+          const SizedBox(width: 8),
+          Text(
+            '$count',
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+              color: color,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildQuestionCard(_TemaConfig config) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: config.color, width: 3),
+        boxShadow: [
+          BoxShadow(
+            color: config.color.withOpacity(0.2),
+            blurRadius: 15,
+            offset: const Offset(0, 5),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          Icon(config.icon, size: 48, color: config.color),
+          const SizedBox(height: 16),
+          Text(
+            _ex!.enunciado,
+            style: const TextStyle(
+              fontSize: 28,
+              fontWeight: FontWeight.bold,
+              height: 1.4,
+            ),
+            textAlign: TextAlign.center,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildOptionCard(int opcion, _TemaConfig config) {
+    final isSelected = (_seleccion == opcion);
+    final isCorrect = (opcion == _ex!.respuesta);
+    
+    Color borderColor = config.color.withOpacity(0.3);
+    Color? bgColor;
+    IconData? icon;
+    
+    if (_seleccion != null) {
+      if (isSelected && isCorrect) {
+        borderColor = Colors.green;
+        bgColor = Colors.green.withOpacity(0.1);
+        icon = Icons.check_circle;
+      } else if (isSelected && !isCorrect) {
+        borderColor = Colors.red;
+        bgColor = Colors.red.withOpacity(0.1);
+        icon = Icons.cancel;
+      } else if (isCorrect) {
+        borderColor = Colors.green;
+        icon = Icons.check;
+      }
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 300),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(20),
+          boxShadow: [
+            BoxShadow(
+              color: isSelected ? borderColor.withOpacity(0.3) : Colors.black12,
+              blurRadius: isSelected ? 15 : 5,
+            ),
+          ],
+        ),
+        child: Material(
+          color: bgColor ?? Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          child: InkWell(
+            onTap: () => _contestar(opcion),
+            borderRadius: BorderRadius.circular(20),
+            child: Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: borderColor, width: 3),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 60,
+                    height: 60,
+                    decoration: BoxDecoration(
+                      color: config.color.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(15),
+                    ),
+                    child: Center(
+                      child: Text(
+                        opcion.toString(),
+                        style: TextStyle(
+                          fontSize: 28,
+                          fontWeight: FontWeight.bold,
+                          color: config.color,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const Spacer(),
+                  if (icon != null)
+                    Icon(icon, size: 36, color: borderColor),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCelebrationOverlay() {
+    return IgnorePointer(
+      child: SizedBox(
+        width: double.infinity,
+        height: double.infinity,
+        child: Center(
+          child: ScaleTransition(
+            scale: Tween<double>(begin: 0, end: 1.5).animate(
+              CurvedAnimation(parent: _celebrationController, curve: Curves.elasticOut),
+            ),
+            child: const Text(
+              '🎉',
+              style: TextStyle(fontSize: 120),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  _TemaConfig _getTemaConfig(String nombre) {
+    switch (nombre.toLowerCase()) {
+      case 'suma':
+        return _TemaConfig(icon: Icons.add_circle, color: Colors.green.shade600);
+      case 'resta':
+        return _TemaConfig(icon: Icons.remove_circle, color: Colors.red.shade600);
+      case 'multiplicacion':
+        return _TemaConfig(icon: Icons.close, color: Colors.blue.shade600);
+      case 'division':
+        return _TemaConfig(icon: Icons.percent, color: Colors.purple.shade600);
+      case 'conteo':
+        return _TemaConfig(icon: Icons.format_list_numbered, color: Colors.orange.shade600);
+      default:
+        return _TemaConfig(icon: Icons.menu_book, color: Colors.teal.shade600);
+    }
+  }
+}
+
+class _TemaConfig {
+  final IconData icon;
+  final Color color;
+  _TemaConfig({required this.icon, required this.color});
 }

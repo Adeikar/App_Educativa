@@ -1,5 +1,4 @@
-// Pestaña única: Solicitudes + Gestión + Papelera (todo en un solo archivo).
-// Sin índices compuestos: queries simples y orden/filtrado en memoria.
+import 'package:app_aprendizaje/services/solicitud_docente_service.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
@@ -14,59 +13,89 @@ enum _View { solicitudes, gestion, papelera }
 class _DocentesSolicitudesTabState extends State<DocentesSolicitudesTab> {
   final _solCol = FirebaseFirestore.instance.collection('solicitudes_docente');
   final _userCol = FirebaseFirestore.instance.collection('usuarios');
+  final _solicitudService = SolicitudDocenteService();
+
+  // Modifica el método _aprobarSolicitud:
+Future<void> _aprobarSolicitud(String solicitudId, String uid) async {
+  try {
+    final batch = FirebaseFirestore.instance.batch();
+    final solRef = _solCol.doc(solicitudId);
+    final userRef = _userCol.doc(uid);
+
+    // Obtener datos de la solicitud para la notificación
+    final solicitudDoc = await solRef.get();
+    final nombreDocente = solicitudDoc.data()?['nombre'] ?? 'Docente';
+
+    batch.update(solRef, {
+      'estado': 'aprobada',
+      'actualizadoEn': FieldValue.serverTimestamp(),
+      'aprobadoEn': FieldValue.serverTimestamp(),
+    });
+
+    batch.set(
+      userRef,
+      {
+        'rol': 'docente',
+        'estado': 'activo',
+        'actualizadoEn': FieldValue.serverTimestamp(),
+      },
+      SetOptions(merge: true),
+    );
+
+    await batch.commit();
+
+    // ===== NUEVO: Notificar al docente aprobado =====
+    await _solicitudService.notificarSolicitudAprobada(
+      docenteId: uid,
+      nombreDocente: nombreDocente,
+    );
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+        .showSnackBar(const SnackBar(content: Text('Solicitud aprobada y docente notificado')));
+  } catch (e) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text('Error al aprobar: $e')));
+  }
+}
 
   _View _view = _View.solicitudes;
 
-  // ----------------------- Acciones: Solicitudes -----------------------
-  Future<void> _aprobarSolicitud(String solicitudId, String uid) async {
-    try {
-      final batch = FirebaseFirestore.instance.batch();
-      final solRef = _solCol.doc(solicitudId);
-      final userRef = _userCol.doc(uid);
+  
+  // Modifica el método _rechazarSolicitud:
+Future<void> _rechazarSolicitud(String solicitudId) async {
+  try {
+    // Obtener datos antes de rechazar
+    final solicitudDoc = await _solCol.doc(solicitudId).get();
+    final data = solicitudDoc.data();
+    final uid = data?['uid'] as String?;
+    final nombreDocente = data?['nombre'] ?? 'Docente';
 
-      batch.update(solRef, {
-        'estado': 'aprobada',
-        'actualizadoEn': FieldValue.serverTimestamp(),
-        'aprobadoEn': FieldValue.serverTimestamp(),
-      });
+    await _solCol.doc(solicitudId).update({
+      'estado': 'rechazada',
+      'actualizadoEn': FieldValue.serverTimestamp(),
+      'rechazadoEn': FieldValue.serverTimestamp(),
+    });
 
-      batch.set(
-        userRef,
-        {
-          'rol': 'docente',
-          'estado': 'activo',
-          'actualizadoEn': FieldValue.serverTimestamp(),
-        },
-        SetOptions(merge: true),
+    // ===== NUEVO: Notificar al docente rechazado =====
+    if (uid != null) {
+      await _solicitudService.notificarSolicitudRechazada(
+        docenteId: uid,
+        nombreDocente: nombreDocente,
+        motivo: 'Tu solicitud ha sido revisada y no cumple con los requisitos en este momento.',
       );
-
-      await batch.commit();
-      if (!mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('Solicitud aprobada')));
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('Error al aprobar: $e')));
     }
-  }
 
-  Future<void> _rechazarSolicitud(String solicitudId) async {
-    try {
-      await _solCol.doc(solicitudId).update({
-        'estado': 'rechazada',
-        'actualizadoEn': FieldValue.serverTimestamp(),
-        'rechazadoEn': FieldValue.serverTimestamp(),
-      });
-      if (!mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('Solicitud rechazada')));
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('Error al rechazar: $e')));
-    }
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+        .showSnackBar(const SnackBar(content: Text('Solicitud rechazada')));
+  } catch (e) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text('Error al rechazar: $e')));
   }
+}
 
   // ----------------------- Acciones: Gestión -----------------------
   Future<void> _activarDocente(String uid) async {
@@ -136,8 +165,6 @@ class _DocentesSolicitudesTabState extends State<DocentesSolicitudesTab> {
   }
 
   Future<void> _borrarDefinitivo(String uid) async {
-    // OJO: esto borra SOLO el documento de Firestore, NO borra la cuenta de Auth.
-    // (Borrar en Auth requiere Admin SDK en backend.)
     try {
       await _userCol.doc(uid).delete();
       if (!mounted) return;

@@ -4,14 +4,13 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import '../repaso_screen.dart';
 
-/// Estructura agregada por tema
 class _TemaStats {
   int ejercicios = 0;
   int aciertos = 0;
   int errores = 0;
   int segundos = 0;
 
-  int get intentos => ejercicios; // alias semántico
+  int get intentos => ejercicios; 
   double get accuracy => ejercicios == 0 ? 0 : aciertos / ejercicios;
 }
 
@@ -28,10 +27,8 @@ class _ProgresoTabState extends State<ProgresoTab> {
   int _totalIntentos = 0;
   int _totalSegundos = 0;
 
-  /// Progreso agregado por tema (suma/resta/multiplicacion/conteo)
   final Map<String, _TemaStats> _porTema = {};
 
-  /// Nivel por tema (muy_basico, basico, medio, alto)
   Map<String, String> _nivelPorTema = {};
 
   @override
@@ -41,10 +38,6 @@ class _ProgresoTabState extends State<ProgresoTab> {
   }
 
   Future<DocumentSnapshot<Map<String, dynamic>>?> _getUserDoc(String uid) async {
-    // Primero intenta en 'users' (donde escribe RepasoScreen). Si no existe, prueba 'usuarios'.
-    final usersRef = FirebaseFirestore.instance.collection('users').doc(uid);
-    final usersDoc = await usersRef.get();
-    if (usersDoc.exists) return usersDoc;
     final usuariosRef = FirebaseFirestore.instance.collection('usuarios').doc(uid);
     final usuariosDoc = await usuariosRef.get();
     if (usuariosDoc.exists) return usuariosDoc;
@@ -70,7 +63,7 @@ class _ProgresoTabState extends State<ProgresoTab> {
         });
         if (localMax > bestQ) {
           bestQ = localMax;
-          bestNivel = rx.firstMatch(k)!.group(2)!; // grupo 2 = nivel
+          bestNivel = rx.firstMatch(k)!.group(2)!; 
         }
       }
     });
@@ -92,9 +85,9 @@ class _ProgresoTabState extends State<ProgresoTab> {
       setState(() => _loading = false);
       return;
     }
-
+    //leer progreso desde Firestore
     try {
-      // --- 1) Leer sesiones del usuario (agrega métricas) ---
+
       final sesionesSnap = await FirebaseFirestore.instance
           .collection('sesiones')
           .where('estudianteId', isEqualTo: uid)
@@ -160,14 +153,14 @@ class _ProgresoTabState extends State<ProgresoTab> {
         }
       }
 
-      // --- 2) Leer progreso/nivel oficial por tema (de users/usuarios) ---
+      // Leer progreso/nivel
       final userDoc = await _getUserDoc(uid);
       final Map<String, String> nivelPorTema = {};
 
       if (userDoc != null && userDoc.exists) {
         final udata = userDoc.data() ?? {};
 
-        // a) Fuente principal: 'progreso'
+        // progreso
         final prog = (udata['progreso'] as Map?)?.cast<String, dynamic>() ?? {};
         for (final entry in prog.entries) {
           final tema = entry.key;
@@ -178,7 +171,7 @@ class _ProgresoTabState extends State<ProgresoTab> {
           }
         }
 
-        // b) Si falta algún tema, inferir desde qTable
+        //Si falta algún tema, inferir desde qTable
         final qTable =
             (udata['qTable'] as Map?)?.cast<String, dynamic>() ?? {};
         for (final tema in qTable.keys) {

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../services/firestore_service.dart';
+import '../services/solicitud_docente_service.dart'; // ← NUEVO IMPORT
 
 class RegistroScreen extends StatefulWidget {
   const RegistroScreen({super.key});
@@ -32,6 +33,7 @@ class _RegistroScreenState extends State<RegistroScreen> {
   final _auth = FirebaseAuth.instance;
   final _db   = FirebaseFirestore.instance;
   final _fs   = FirestoreService();
+  final _solicitudService = SolicitudDocenteService(); // ← NUEVO SERVICIO
 
   @override
   void dispose() {
@@ -143,9 +145,10 @@ class _RegistroScreenState extends State<RegistroScreen> {
         institucion: _instCtrl.text,
       );
 
-      // 4) Si es Docente, crear solicitud
+      // 4) Si es Docente, crear solicitud Y NOTIFICAR
       if (_rol == 'docente') {
-        await _db.collection('solicitudes_docente').add({
+        // Crear documento de solicitud
+        final docRef = await _db.collection('solicitudes_docente').add({
           'uid'          : cred.user!.uid,
           'nombre'       : _nombreCtrl.text.trim(),
           'correo'       : _emailCtrl.text.trim().toLowerCase(),
@@ -157,6 +160,20 @@ class _RegistroScreenState extends State<RegistroScreen> {
           'creadoEn'     : FieldValue.serverTimestamp(),
           'actualizadoEn': FieldValue.serverTimestamp(),
         });
+
+        // ===== NUEVO: Notificar a administradores =====
+        try {
+          await _solicitudService.notificarNuevaSolicitud(
+            solicitudId: docRef.id,
+            nombreDocente: _nombreCtrl.text.trim(),
+            correo: _emailCtrl.text.trim(),
+            institucion: _instCtrl.text.trim(),
+          );
+          print('✅ Notificación enviada a administradores');
+        } catch (e) {
+          // No bloqueamos el registro si falla la notificación
+          print('⚠️ Error al enviar notificación (no crítico): $e');
+        }
       }
 
       // 5) Verificación de correo y salida
@@ -165,7 +182,7 @@ class _RegistroScreenState extends State<RegistroScreen> {
         await _auth.signOut();
 
         final extra = (_rol == 'docente')
-            ? '\n\nTu solicitud para Docente fue enviada. Un administrador debe aprobarla antes de que puedas ingresar.'
+            ? '\n\n✅ Tu solicitud para Docente fue enviada. Un administrador la revisará pronto y recibirás una notificación.'
             : '';
         if (!mounted) return;
         await showDialog(
@@ -175,7 +192,12 @@ class _RegistroScreenState extends State<RegistroScreen> {
             content: Text(
               'Te envié un enlace a ${_emailCtrl.text.trim()} para verificar tu cuenta.$extra',
             ),
-            actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('OK'))],
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('OK'),
+              )
+            ],
           ),
         );
       }
@@ -202,8 +224,6 @@ class _RegistroScreenState extends State<RegistroScreen> {
       if (mounted) setState(() => _loading = false);
     }
   }
-
-
 
   // ---------- UI ----------
   @override
@@ -330,7 +350,7 @@ class _RegistroScreenState extends State<RegistroScreen> {
                     Align(
                       alignment: Alignment.centerLeft,
                       child: Text(
-                        'Nota: si eliges Docente, tu cuenta quedará en revisión por un administrador.',
+                        '📋 Nota: Tu solicitud será revisada por un administrador. Recibirás una notificación cuando sea aprobada.',
                         style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
                       ),
                     ),
