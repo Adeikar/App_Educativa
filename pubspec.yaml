@@ -11,22 +11,33 @@ dependencies:
     sdk: flutter
 
   cupertino_icons: ^1.0.8
-  firebase_messaging: ^16.0.1
-  flutter_local_notifications: ^17.2.3
-  firebase_core: ^4.0.0
-  firebase_auth: ^6.0.1
-  cloud_firestore: ^6.0.0
+
+  # -----------------------------------------------------------------
+  # 🔥 FIREBASE ACTUALIZADO (Versiones estables y compatibles) 🔥
+  # Se actualizaron las versiones antiguas para resolver el conflicto.
+  # -----------------------------------------------------------------
+  firebase_messaging: ^16.0.3      # Actualizado desde ^16.0.1
+  flutter_local_notifications: ^19.4.2 
+  firebase_core: ^4.2.0          # Actualizado desde ^4.0.0
+  firebase_auth: ^6.1.1          # Actualizado desde ^6.0.1
+  cloud_firestore: ^6.0.3        # Actualizado desde ^6.0.0
+  
+  # Paquetes de la solución de perfil
+  firebase_storage: ^13.0.3       # Actualizado desde ^12.0.1 para compatibilidad con las versiones anteriores.
+  cached_network_image: ^3.3.1    # Agregado para el caché de imágenes.
+  
+  # Paquetes existentes
   image_picker: ^1.1.2
   pdf: ^3.11.0
   printing: ^5.13.4
-  syncfusion_flutter_charts: ^26.2.11
-  fl_chart: ^0.68.0
+  syncfusion_flutter_charts: ^31.1.19
+  fl_chart: ^1.1.0
   uuid: ^4.5.1
-  intl: ^0.19.0
-  flutter_tts: ^4.0.2           
-  speech_to_text: ^7.0.0        
-  permission_handler: ^11.3.1 
-
+  intl: ^0.20.2
+  flutter_tts: ^4.0.2
+  speech_to_text: ^7.0.0
+  permission_handler: ^12.0.1
+  # -----------------------------------------------------------------
 dev_dependencies:
   flutter_test:
     sdk: flutter

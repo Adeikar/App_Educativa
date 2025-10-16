@@ -1,14 +1,12 @@
-// lib/services/fcm_service.dart
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 
-// Manejador de notificaciones en segundo plano (DEBE estar fuera de la clase)
 @pragma('vm:entry-point')
 Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
-  print('📩 Notificación recibida en segundo plano: ${message.notification?.title}');
+
 }
 
 class FCMService {
@@ -19,31 +17,24 @@ class FCMService {
   final FirebaseMessaging _fcm = FirebaseMessaging.instance;
   final FlutterLocalNotificationsPlugin _localNotifications = FlutterLocalNotificationsPlugin();
 
-  // Inicializa FCM y notificaciones locales
   Future<void> initialize() async {
-    // 1. Solicitar permisos
-    await _requestPermissions();
 
-    // 2. Configurar notificaciones locales
-    await _setupLocalNotifications();
+  await _requestPermissions();
+  await _setupLocalNotifications();
 
-    // 3. Obtener token FCM
     final token = await _fcm.getToken();
     if (token != null) {
-      print('📱 FCM Token: $token');
       await _saveTokenToFirestore(token);
     }
 
-    // 4. Escuchar cambios de token
     _fcm.onTokenRefresh.listen(_saveTokenToFirestore);
 
-    // 5. Configurar manejadores de notificaciones
     _setupForegroundHandler();
     _setupBackgroundHandler();
     _setupNotificationTapHandler();
   }
 
-  // Solicita permisos de notificaciones
+
   Future<void> _requestPermissions() async {
     final settings = await _fcm.requestPermission(
       alert: true,
@@ -53,13 +44,9 @@ class FCMService {
     );
 
     if (settings.authorizationStatus == AuthorizationStatus.authorized) {
-      print('✅ Permisos de notificación concedidos');
-    } else {
-      print('⚠️ Permisos de notificación denegados');
-    }
+    } 
   }
 
-  // Configura notificaciones locales (Android)
   Future<void> _setupLocalNotifications() async {
     const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
     const iosSettings = DarwinInitializationSettings();
@@ -91,21 +78,17 @@ class FCMService {
       'fcmToken': token,
       'actualizadoEn': FieldValue.serverTimestamp(),
     });
-
-    print('💾 Token FCM guardado en Firestore');
   }
 
-  // Maneja notificaciones cuando la app está en primer plano
+  // primer plano
   void _setupForegroundHandler() {
     FirebaseMessaging.onMessage.listen((RemoteMessage message) {
-      print('📩 Notificación recibida (app abierta): ${message.notification?.title}');
 
       final notification = message.notification;
       final android = message.notification?.android;
 
       if (notification != null) {
-        // NOTA: Aquí el payload es simple, lo ideal sería pasar el 'tipo' para que el onSelect
-        // de local_notifications lo maneje correctamente también.
+
         _localNotifications.show(
           notification.hashCode,
           notification.title,
@@ -126,7 +109,6 @@ class FCMService {
     });
   }
 
-  // Configura manejador de segundo plano
   void _setupBackgroundHandler() {
     FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
   }
@@ -134,35 +116,23 @@ class FCMService {
   // Maneja cuando el usuario toca la notificación
   void _setupNotificationTapHandler() {
     FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
-      print('🔔 Usuario tocó la notificación: ${message.notification?.title}');
       
       final data = message.data;
       final tipo = data['tipo'];
       final accion = data['accion'];
 
-      // --- Lógica de Manejo de Tap CORREGIDA ---
       if (tipo == 'solicitud_aprobada' && accion == 'abrir_home') {
-        // Docente aprobado: Navegar a la pantalla principal de Docente/Tutor
-        // Esto es lo que faltaba para diferenciar la notificación de aprobación
-        // TODO: Implementar la navegación real a la pantalla DocenteTutorScreen (ej: '/docente_tutor')
-        print('✅ Navegar a HOME DOCENTE/TUTOR (Solicitud Aprobada)');
-
       } else if (tipo == 'sesion_completada') {
         // Docente/Tutor recibe informe de estudiante
         final estudianteId = data['estudianteId'];
-        // TODO: Navegar a pantalla de progreso del estudiante
         print('📊 Abrir progreso de estudiante: $estudianteId');
 
       } else if (tipo == 'solicitud_docente' && accion == 'abrir_solicitudes') {
-        // Administrador: Recibe nueva solicitud pendiente
-        // TODO: Navegar a la pestaña de solicitudes
-        print('📋 Abrir pestaña de solicitudes (Admin)');
       }
-      // Fin de la lógica corregida
     });
   }
 
-  // Envía notificación push a usuarios específicos
+  // Envía 
   Future<void> sendNotificationToUsers({
     required List<String> userIds,
     required String title,
@@ -174,7 +144,6 @@ class FCMService {
       final tokens = await _getTokensForUsers(userIds);
       
       if (tokens.isEmpty) {
-        print('⚠️ No se encontraron tokens FCM');
         return;
       }
 
@@ -189,11 +158,7 @@ class FCMService {
         'creadoEn': FieldValue.serverTimestamp(),
         'estado': 'pendiente',
       });
-
-      print('✅ Notificación agregada a cola de envío');
-    } catch (e) {
-      print('⚠️ Error enviando notificación: $e');
-    }
+    } catch (__) {}
   }
 
   // Obtiene tokens FCM de usuarios
@@ -211,9 +176,6 @@ class FCMService {
     return tokens;
   }
 
-  // ⬇️ AGREGA este método dentro de la clase FCMService (no quites nada de lo tuyo)
-  /// Inicialización segura para Web: no registra BG handler ni notifs locales.
-  /// No tumba la app si el Service Worker no está.
   Future<void> initializeWebSafe() async {
     if (!kIsWeb) return; // Esto solo corre en Web
 
@@ -224,18 +186,13 @@ class FCMService {
         badge: true,
         sound: true,
       );
-      // print('Web notif perm: ${settings.authorizationStatus}');
 
-      // 2) Intenta obtener token (requiere SW en web/firebase-messaging-sw.js)
       final token = await _fcm.getToken();
       if (token != null) {
-        // Guarda token como en móvil (si hay usuario)
+        // Guarda token como en móvil
         await _saveTokenToFirestore(token);
-        // 3) Escucha refresh de token (opcional, pero útil)
         _fcm.onTokenRefresh.listen(_saveTokenToFirestore);
       }
-    } catch (e) {
-
-    }
+    } catch (__) {}
   }
 }

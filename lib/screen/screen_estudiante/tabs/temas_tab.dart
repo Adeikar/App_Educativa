@@ -1,7 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_tts/flutter_tts.dart';
-import 'package:speech_to_text/speech_to_text.dart' as stt;
 
 class TemasTab extends StatefulWidget {
   const TemasTab({super.key});
@@ -12,29 +11,18 @@ class TemasTab extends StatefulWidget {
 
 class _TemasTabState extends State<TemasTab> {
   final FlutterTts _flutterTts = FlutterTts();
-  final stt.SpeechToText _speech = stt.SpeechToText();
-  bool _isListening = false;
-  String _searchText = '';
 
   @override
   void initState() {
     super.initState();
     _initializeTts();
-    _initializeSpeech();
   }
 
   Future<void> _initializeTts() async {
     await _flutterTts.setLanguage("es-ES");
-    await _flutterTts.setSpeechRate(0.8); // Más lento para mejor comprensión
+    await _flutterTts.setSpeechRate(0.6); // Más lento para mejor comprensión
     await _flutterTts.setVolume(1.0);
     await _flutterTts.setPitch(1.0);
-  }
-
-  Future<void> _initializeSpeech() async {
-    await _speech.initialize(
-      onError: (error) => print('Error: $error'),
-      onStatus: (status) => print('Status: $status'),
-    );
   }
 
   Future<void> _speak(String text) async {
@@ -42,34 +30,9 @@ class _TemasTabState extends State<TemasTab> {
     await _flutterTts.speak(text);
   }
 
-  void _startListening() async {
-    if (!_isListening) {
-      bool available = await _speech.initialize();
-      if (available) {
-        setState(() => _isListening = true);
-        _speech.listen(
-          onResult: (result) {
-            setState(() {
-              _searchText = result.recognizedWords.toLowerCase();
-            });
-          },
-          localeId: 'es_ES',
-        );
-        
-        // Feedback auditivo
-        await _speak("Escuchando, dime qué tema buscas");
-      }
-    } else {
-      setState(() => _isListening = false);
-      _speech.stop();
-      await _speak("Búsqueda detenida");
-    }
-  }
-
   @override
   void dispose() {
     _flutterTts.stop();
-    _speech.stop();
     super.dispose();
   }
 
@@ -77,8 +40,8 @@ class _TemasTabState extends State<TemasTab> {
   Widget build(BuildContext context) {
     return Column(
       children: [
-        // Barra de búsqueda accesible
-        _buildAccessibleSearchBar(),
+        // Solo header simple sin búsqueda por voz
+        _buildHeader(),
         
         // Lista de temas
         Expanded(
@@ -103,27 +66,17 @@ class _TemasTabState extends State<TemasTab> {
               }
               
               final docs = snap.data?.docs ?? [];
-              
-              // Filtrar por búsqueda de voz
-              final filteredDocs = docs.where((doc) {
-                if (_searchText.isEmpty) return true;
-                final data = doc.data() as Map<String, dynamic>? ?? {};
-                final nombre = (data['nombre'] ?? '').toString().toLowerCase();
-                return nombre.contains(_searchText);
-              }).toList();
 
-              if (filteredDocs.isEmpty) {
+              if (docs.isEmpty) {
                 return Center(
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Icon(Icons.search_off, size: 80, color: Colors.grey.shade400),
+                      Icon(Icons.menu_book, size: 80, color: Colors.grey.shade400),
                       const SizedBox(height: 16),
-                      Text(
-                        _searchText.isEmpty 
-                            ? 'No hay temas disponibles'
-                            : 'No se encontró "$_searchText"',
-                        style: const TextStyle(fontSize: 20),
+                      const Text(
+                        'No hay temas disponibles',
+                        style: TextStyle(fontSize: 20),
                       ),
                     ],
                   ),
@@ -132,17 +85,17 @@ class _TemasTabState extends State<TemasTab> {
 
               return ListView.separated(
                 padding: const EdgeInsets.all(16),
-                itemCount: filteredDocs.length,
+                itemCount: docs.length,
                 separatorBuilder: (_, __) => const SizedBox(height: 12),
                 itemBuilder: (_, i) {
-                  final data = (filteredDocs[i].data() as Map<String, dynamic>?) ?? {};
+                  final data = (docs[i].data() as Map<String, dynamic>?) ?? {};
                   final nombre = (data['nombre'] ?? '').toString();
                   final concepto = (data['concepto'] ?? '').toString();
 
                   return _buildTemaCard(
                     nombre: nombre,
                     concepto: concepto,
-                    docId: filteredDocs[i].id,
+                    docId: docs[i].id,
                   );
                 },
               );
@@ -153,7 +106,7 @@ class _TemasTabState extends State<TemasTab> {
     );
   }
 
-  Widget _buildAccessibleSearchBar() {
+  Widget _buildHeader() {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -166,74 +119,15 @@ class _TemasTabState extends State<TemasTab> {
           ),
         ],
       ),
-      child: Row(
-        children: [
-          // Botón de voz grande y accesible
-          Expanded(
-            child: GestureDetector(
-              onTap: _startListening,
-              child: Container(
-                padding: const EdgeInsets.symmetric(vertical: 20),
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: _isListening
-                        ? [Colors.red.shade400, Colors.red.shade600]
-                        : [Colors.blue.shade400, Colors.blue.shade600],
-                  ),
-                  borderRadius: BorderRadius.circular(16),
-                  boxShadow: [
-                    BoxShadow(
-                      color: _isListening 
-                          ? Colors.red.withOpacity(0.3)
-                          : Colors.blue.withOpacity(0.3),
-                      blurRadius: 8,
-                      offset: const Offset(0, 4),
-                    ),
-                  ],
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(
-                      _isListening ? Icons.mic : Icons.mic_none,
-                      color: Colors.white,
-                      size: 32,
-                    ),
-                    const SizedBox(width: 12),
-                    Text(
-                      _isListening ? 'Escuchando...' : 'Buscar por voz',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
+      child: const Center(
+        child: Text(
+          'Selecciona un tema para practicar',
+          style: TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+            color: Colors.blue,
           ),
-          
-          // Botón para limpiar búsqueda
-          if (_searchText.isNotEmpty) ...[
-            const SizedBox(width: 12),
-            Material(
-              color: Colors.grey.shade200,
-              borderRadius: BorderRadius.circular(12),
-              child: InkWell(
-                onTap: () {
-                  setState(() => _searchText = '');
-                  _speak("Búsqueda limpiada");
-                },
-                borderRadius: BorderRadius.circular(12),
-                child: Container(
-                  padding: const EdgeInsets.all(16),
-                  child: const Icon(Icons.clear, size: 28),
-                ),
-              ),
-            ),
-          ],
-        ],
+        ),
       ),
     );
   }

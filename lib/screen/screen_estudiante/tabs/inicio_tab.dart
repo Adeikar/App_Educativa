@@ -24,7 +24,7 @@ class _InicioTabState extends State<InicioTab> {
 
   Future<void> _initializeTts() async {
     await _flutterTts.setLanguage("es-ES");
-    await _flutterTts.setSpeechRate(0.8);
+    await _flutterTts.setSpeechRate(0.6);
     await _flutterTts.setVolume(1.0);
     await _flutterTts.setPitch(1.1);
   }

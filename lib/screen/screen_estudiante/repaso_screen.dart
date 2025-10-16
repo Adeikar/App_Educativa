@@ -1,7 +1,11 @@
+import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_tts/flutter_tts.dart';
+import 'package:speech_to_text/speech_to_text.dart';
+import 'package:permission_handler/permission_handler.dart';
 import '../../services/q_learning_service.dart';
 import '../../services/exercise_engine.dart';
 import 'package:app_aprendizaje/services/notification_service.dart';
@@ -15,10 +19,17 @@ class RepasoScreen extends StatefulWidget {
 }
 
 class _RepasoScreenState extends State<RepasoScreen> with TickerProviderStateMixin {
+  // ============================================================
+  // SERVICIOS Y MOTORES PRINCIPALES
+  // ============================================================
   final ExerciseEngine _engine = ExerciseEngine();
   late final QLearningService _ql;
   final FlutterTts _flutterTts = FlutterTts();
+  final SpeechToText _speechToText = SpeechToText();
 
+  // ============================================================
+  // VARIABLES DE Q-LEARNING Y ESTADO DEL EJERCICIO
+  // ============================================================
   Exercise? _ex;
   String _s = 'muy_basico';
   String _a = 'mantener-mantener_obj';
@@ -26,22 +37,42 @@ class _RepasoScreenState extends State<RepasoScreen> with TickerProviderStateMix
   int _objetivo = 2;
   int _objetivoPrime = 2;
 
+  // ============================================================
+  // VARIABLES DE PROGRESO Y ESTADÍSTICAS
+  // ============================================================
   int _idx = 0;
   int _aciertos = 0;
   int _errores = 0;
   final int _max = 10;
   late DateTime _inicio;
 
+  // ============================================================
+  // VARIABLES DE INTERACCIÓN Y UI
+  // ============================================================
   bool _bloqueado = false;
   int? _seleccion;
   bool _showOverlay = false;
   Color _overlayColor = Colors.transparent;
   bool _showCelebration = false;
   
+  // ============================================================
+  // VARIABLES DE AUDIO INTERACTIVO
+  // ============================================================
+  bool _modoAudioInteractivo = false;
+  bool _isListening = false;
+  bool _speechInitialized = false;
+  String _recognizedText = '';
+  bool _isSpeaking = false;
+  
+  // ============================================================
+  // CONTROLADORES DE ANIMACIONES
+  // ============================================================
   late AnimationController _progressController;
   late AnimationController _celebrationController;
   late AnimationController _shakeController;
+  late AnimationController _pulseController;
   late Animation<double> _shakeAnimation;
+  late Animation<double> _pulseAnimation;
 
   @override
   void initState() {
@@ -49,17 +80,86 @@ class _RepasoScreenState extends State<RepasoScreen> with TickerProviderStateMix
     super.initState();
     _inicio = DateTime.now();
     _initializeTts();
+    _initializeSpeech();
     _initializeAnimations();
     _cargarPrimero();
   }
 
+  // ============================================================
+  // CONFIGURACIÓN DE TEXTO A VOZ (TTS)
+  // ============================================================
   Future<void> _initializeTts() async {
     await _flutterTts.setLanguage("es-ES");
-    await _flutterTts.setSpeechRate(0.8);
-    await _flutterTts.setVolume(1.0);
-    await _flutterTts.setPitch(1.1);
+    
+    if (kIsWeb) {
+      await _flutterTts.setSpeechRate(0.5);
+      await _flutterTts.setVolume(1.0);
+      await _flutterTts.setPitch(1.0);
+    } else {
+      await _flutterTts.setSpeechRate(0.6);
+      await _flutterTts.setVolume(1.0);
+      await _flutterTts.setPitch(1.1);
+    }
+
+    // Configurar handlers
+    _flutterTts.setStartHandler(() {
+      if (mounted) {
+        setState(() => _isSpeaking = true);
+      }
+    });
+
+    _flutterTts.setCompletionHandler(() {
+      if (mounted) {
+        setState(() => _isSpeaking = false);
+      }
+    });
+
+    _flutterTts.setErrorHandler((msg) {
+      if (mounted) {
+        setState(() => _isSpeaking = false);
+      }
+    });
   }
 
+  // ============================================================
+  // INICIALIZACIÓN DEL RECONOCIMIENTO DE VOZ
+  // ============================================================
+  Future<void> _initializeSpeech() async {
+    try {
+      final status = await Permission.microphone.request();
+      if (status.isGranted) {
+        _speechInitialized = await _speechToText.initialize(
+          onError: (error) {
+            print('Error de reconocimiento: $error');
+            if (mounted) {
+              setState(() => _isListening = false);
+            }
+            // Reiniciar en caso de error no crítico
+            if (mounted && _modoAudioInteractivo && !_bloqueado && !_isSpeaking) {
+              Future.delayed(const Duration(milliseconds: 500), () {
+                if (mounted) _startListening();
+              });
+            }
+          },
+          onStatus: (status) {
+            print('Estado STT: $status');
+            if (status == 'done' || status == 'notListening') {
+              if (mounted) {
+                setState(() => _isListening = false);
+              }
+              // NO reiniciar aquí - el timer lo maneja
+            }
+          },
+        );
+      }
+    } catch (e) {
+      print('Error al inicializar speech: $e');
+    }
+  }
+
+  // ============================================================
+  // INICIALIZACIÓN DE ANIMACIONES
+  // ============================================================
   void _initializeAnimations() {
     _progressController = AnimationController(
       duration: const Duration(milliseconds: 800),
@@ -76,15 +176,230 @@ class _RepasoScreenState extends State<RepasoScreen> with TickerProviderStateMix
       vsync: this,
     );
 
+    _pulseController = AnimationController(
+      duration: const Duration(milliseconds: 1000),
+      vsync: this,
+    )..repeat(reverse: true);
+
     _shakeAnimation = Tween<double>(begin: 0, end: 10).animate(
       CurvedAnimation(parent: _shakeController, curve: Curves.elasticIn),
     );
+
+    _pulseAnimation = Tween<double>(begin: 1.0, end: 1.2).animate(
+      CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
+    );
   }
 
+  // ============================================================
+  // FUNCIÓN AUXILIAR PARA REPRODUCIR AUDIO - MEJORADA
+  // ============================================================
   Future<void> _speak(String text) async {
+    if (text.isEmpty) return;
+    
+    await _flutterTts.stop();
+    await Future.delayed(const Duration(milliseconds: 100));
+    
+    setState(() => _isSpeaking = true);
+    
     await _flutterTts.speak(text);
+    
+    final palabras = text.split(' ').length;
+    final tiempoEstimadoMs = ((palabras / 2.5) * 1000).toInt() + 800;
+    
+    int elapsed = 0;
+    while (_isSpeaking && elapsed < tiempoEstimadoMs) {
+      await Future.delayed(const Duration(milliseconds: 100));
+      elapsed += 100;
+    }
+    
+    await Future.delayed(const Duration(milliseconds: 400));
+    
+    setState(() => _isSpeaking = false);
   }
 
+  // ============================================================
+  // LEER OPCIONES Y ACTIVAR ESCUCHA
+  // ============================================================
+  Future<void> _leerOpcionesYEscuchar() async {
+    if (!_modoAudioInteractivo || _ex == null || _bloqueado) return;
+
+    await _stopListening();
+    await _flutterTts.stop();
+    await Future.delayed(const Duration(milliseconds: 200));
+
+    String opcionesTexto = "Las opciones son: ";
+    for (int i = 0; i < _ex!.opciones.length; i++) {
+      opcionesTexto += "${_ex!.opciones[i]}";
+      if (i < _ex!.opciones.length - 1) {
+        opcionesTexto += ", ";
+      }
+    }
+    opcionesTexto += ". Dime tu respuesta.";
+    
+    await _speak(opcionesTexto);
+    
+    await Future.delayed(const Duration(milliseconds: 800));
+    
+    if (!_bloqueado && _modoAudioInteractivo && !_isListening && !_isSpeaking && mounted) {
+      await _startListening();
+    }
+  }
+
+  // ============================================================
+  // INICIAR RECONOCIMIENTO DE VOZ
+  // ============================================================
+  Future<void> _startListening() async {
+    if (!_speechInitialized || _isListening || _bloqueado || _isSpeaking) {
+      print('No se puede escuchar: initialized=$_speechInitialized, listening=$_isListening, bloqueado=$_bloqueado, speaking=$_isSpeaking');
+      return;
+    }
+
+    print('Iniciando escucha...');
+    
+    setState(() {
+      _isListening = true;
+      _recognizedText = '';
+    });
+
+    // Timer para reiniciar cada 25 segundos (antes de que el SO corte)
+    Timer? restartTimer;
+    restartTimer = Timer(const Duration(seconds: 25), () {
+      if (_isListening && mounted && _modoAudioInteractivo && !_bloqueado) {
+        print('Reiniciando escucha por timeout del SO');
+        _restartListening(restartTimer);
+      }
+    });
+
+    try {
+      await _speechToText.listen(
+        onResult: (result) {
+          if (!mounted) return;
+          
+          print('Resultado STT: ${result.recognizedWords} - final: ${result.finalResult}');
+          
+          setState(() {
+            _recognizedText = result.recognizedWords.toLowerCase();
+          });
+
+          if (result.finalResult && _recognizedText.isNotEmpty) {
+            restartTimer?.cancel(); // Cancelar timer si hay resultado
+            _procesarRespuestaVoz(_recognizedText);
+          }
+        },
+        listenFor: const Duration(seconds: 30), // Máximo permitido por SO
+        pauseFor: const Duration(seconds: 5),   // Silencio corto
+        localeId: 'es_ES',
+        cancelOnError: false, // NO cancelar en errores
+        partialResults: true,
+      );
+    } catch (e) {
+      print('Error al iniciar escucha: $e');
+      restartTimer?.cancel();
+      setState(() => _isListening = false);
+      _restartListening(null);
+    }
+  }
+
+  // ============================================================
+  // REINICIAR ESCUCHA SUAVEMENTE
+  // ============================================================
+  void _restartListening(Timer? previousTimer) {
+    previousTimer?.cancel();
+    
+    if (mounted && _modoAudioInteractivo && !_bloqueado && !_isSpeaking) {
+      Future.delayed(const Duration(milliseconds: 300), () async {
+        await _stopListening();
+        await Future.delayed(const Duration(milliseconds: 200));
+        await _startListening();
+      });
+    }
+  }
+
+  // ============================================================
+  // DETENER RECONOCIMIENTO DE VOZ
+  // ============================================================
+  Future<void> _stopListening() async {
+    if (_speechToText.isListening) {
+      await _speechToText.stop();
+    }
+    if (mounted) {
+      setState(() {
+        _isListening = false;
+        _recognizedText = '';
+      });
+    }
+  }
+
+  // ============================================================
+  // PROCESAR LA RESPUESTA DADA POR VOZ
+  // ============================================================
+  Future<void> _procesarRespuestaVoz(String texto) async {
+    if (_ex == null || _bloqueado) return;
+
+    print('Procesando respuesta de voz: "$texto"');
+
+    int? respuesta;
+
+    final palabrasNumeros = {
+      'cero': 0, 'uno': 1, 'dos': 2, 'tres': 3, 'cuatro': 4,
+      'cinco': 5, 'seis': 6, 'siete': 7, 'ocho': 8, 'nueve': 9,
+      'diez': 10, 'once': 11, 'doce': 12, 'trece': 13, 'catorce': 14,
+      'quince': 15, 'dieciséis': 16, 'dieciseis': 16, 'diecisiete': 17,
+      'dieciocho': 18, 'diecinueve': 19, 'veinte': 20,
+      'veintiuno': 21, 'veintidós': 22, 'veintidos': 22, 'veintitrés': 23, 'veintitres': 23,
+      'veinticuatro': 24, 'veinticinco': 25, 'veintiséis': 26, 'veintiseis': 26,
+      'veintisiete': 27, 'veintiocho': 28, 'veintinueve': 29, 'treinta': 30,
+      'treinta y uno': 31, 'treintayuno': 31, 'treinta y dos': 32, 'treintaydos': 32,
+      'treinta y tres': 33, 'treintaytres': 33, 'treinta y cuatro': 34, 'treintaycuatro': 34,
+      'treinta y cinco': 35, 'treintaycinco': 35, 'treinta y seis': 36, 'treintayseis': 36,
+      'treinta y siete': 37, 'treintaysiete': 37, 'treinta y ocho': 38, 'treintayocho': 38,
+      'treinta y nueve': 39, 'treintaynueve': 39, 'cuarenta': 40,
+      'cuarenta y uno': 41, 'cuarentayuno': 41, 'cuarenta y dos': 42, 'cuarentaydos': 42,
+      'cuarenta y tres': 43, 'cuarentaytres': 43, 'cuarenta y cuatro': 44, 'cuarentaycuatro': 44,
+      'cuarenta y cinco': 45, 'cuarentaycinco': 45, 'cuarenta y seis': 46, 'cuarentayseis': 46,
+      'cuarenta y siete': 47, 'cuarentaysiete': 47, 'cuarenta y ocho': 48, 'cuarentayocho': 48,
+      'cuarenta y nueve': 49, 'cuarentaynueve': 49, 'cincuenta': 50,
+      // Agregar más si es necesario, hasta 100 por ejemplo
+      'cincuenta y uno': 51, 'cincuentayuno': 51, /* ... continuar si hace falta */
+    };
+
+    for (var opcion in _ex!.opciones) {
+      if (texto.contains(opcion.toString())) {
+        respuesta = opcion;
+        break;
+      }
+    }
+
+    if (respuesta == null) {
+      for (var entry in palabrasNumeros.entries) {
+        if (texto.contains(entry.key)) {
+          if (_ex!.opciones.contains(entry.value)) {
+            respuesta = entry.value;
+            break;
+          }
+        }
+      }
+    }
+
+    await _stopListening();
+
+    if (respuesta != null) {
+      print('Respuesta reconocida: $respuesta');
+      await _contestar(respuesta);
+    } else {
+      print('No se reconoció respuesta válida');
+      await _speak("No entendí tu respuesta. Intenta de nuevo.");
+      await Future.delayed(const Duration(milliseconds: 2000));
+      
+      if (_modoAudioInteractivo && !_bloqueado && mounted) {
+        await _startListening();
+      }
+    }
+  }
+
+  // ============================================================
+  // CARGA INICIAL
+  // ============================================================
   Future<void> _cargarPrimero() async {
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid == null) {
@@ -106,15 +421,26 @@ class _RepasoScreenState extends State<RepasoScreen> with TickerProviderStateMix
     await _planificarYSometerSiguiente(uid);
   }
 
+  // ============================================================
+  // PLANIFICAR ACCIÓN
+  // ============================================================
   Future<void> _planificarYSometerSiguiente(String uid) async {
     _a = await _ql.pickAction(uid, widget.tema, _s, _objetivo);
+    
     final result = _ql.applyAction(_s, _objetivo, _a);
     _sPrime = result['nivel'];
     _objetivoPrime = result['objetivo'];
+    
     await _cargarEjercicio(_sPrime, accion: _a);
   }
 
+  // ============================================================
+  // CARGAR Y MOSTRAR NUEVO EJERCICIO
+  // ============================================================
   Future<void> _cargarEjercicio(String nivel, {required String accion}) async {
+    await _stopListening();
+    await _flutterTts.stop();
+    
     setState(() {
       _ex = _engine.generateNextByAction(
         widget.tema,
@@ -127,12 +453,29 @@ class _RepasoScreenState extends State<RepasoScreen> with TickerProviderStateMix
       _showOverlay = false;
       _overlayColor = Colors.transparent;
       _showCelebration = false;
+      _recognizedText = '';
+      _isListening = false;
+      _isSpeaking = false;
     });
+    
     _progressController.forward(from: 0);
+
+    if (_modoAudioInteractivo && _ex != null && _idx == 0) {
+      await Future.delayed(const Duration(milliseconds: 600));
+      await _speak("Ejercicio 1. ${_ex!.enunciado}");
+      await Future.delayed(const Duration(milliseconds: 500));
+      await _leerOpcionesYEscuchar();
+    }
   }
 
+  // ============================================================
+  // PROCESAR RESPUESTA
+  // ============================================================
   Future<void> _contestar(int valor) async {
     if (_bloqueado || _ex == null) return;
+
+    await _stopListening();
+    await _flutterTts.stop();
 
     setState(() {
       _bloqueado = true;
@@ -151,6 +494,7 @@ class _RepasoScreenState extends State<RepasoScreen> with TickerProviderStateMix
       reward = baseReward + bonusDificultad;
         
       _aciertos++;
+      
       setState(() {
         _overlayColor = Colors.green;
         _showOverlay = true;
@@ -169,6 +513,7 @@ class _RepasoScreenState extends State<RepasoScreen> with TickerProviderStateMix
       }
       
       _errores++;
+      
       setState(() {
         _overlayColor = Colors.red;
         _showOverlay = true;
@@ -200,6 +545,7 @@ class _RepasoScreenState extends State<RepasoScreen> with TickerProviderStateMix
     await Future.delayed(const Duration(milliseconds: 1800));
 
     if (!mounted) return;
+    
     setState(() {
       _showOverlay = false;
       _showCelebration = false;
@@ -214,37 +560,40 @@ class _RepasoScreenState extends State<RepasoScreen> with TickerProviderStateMix
     }
   }
 
+  // ============================================================
+  // GUARDAR CONTADOR DE ACCIONES
+  // ============================================================
   Future<void> _guardarContadorAccion(String uid) async {
+    final doc = await FirebaseFirestore.instance
+        .collection('usuarios')
+        .doc(uid)
+        .get();
+    
+    final data = doc.data();
+    final progreso = data?['progreso'] as Map<String, dynamic>?;
+    final temaProg = progreso?[widget.tema] as Map<String, dynamic>?;
+    final ultimaAccion = temaProg?['ultimaAccion'] as String?;
+    
+    final vecesRepetida = (ultimaAccion == _a) 
+        ? ((temaProg?['vecesRepetidaAccion'] as int? ?? 0) + 1)
+        : 1;
 
-      final doc = await FirebaseFirestore.instance
-          .collection('usuarios')
-          .doc(uid)
-          .get();
-      
-      final data = doc.data();
-      final progreso = data?['progreso'] as Map<String, dynamic>?;
-      final temaProg = progreso?[widget.tema] as Map<String, dynamic>?;
-      final ultimaAccion = temaProg?['ultimaAccion'] as String?;
-      
-      final vecesRepetida = (ultimaAccion == _a) 
-          ? ((temaProg?['vecesRepetidaAccion'] as int? ?? 0) + 1)
-          : 1;
-
-      await FirebaseFirestore.instance.collection('usuarios').doc(uid).set({
-        'progreso': {
-          widget.tema: {
-            'ultimaAccion': _a,
-            'vecesRepetidaAccion': vecesRepetida,
-            'actualizadoEn': FieldValue.serverTimestamp(),
-          }
+    await FirebaseFirestore.instance.collection('usuarios').doc(uid).set({
+      'progreso': {
+        widget.tema: {
+          'ultimaAccion': _a,
+          'vecesRepetidaAccion': vecesRepetida,
+          'actualizadoEn': FieldValue.serverTimestamp(),
         }
-      }, SetOptions(merge: true));
+      }
+    }, SetOptions(merge: true));
   }
 
+  // ============================================================
+  // AVANZAR AL SIGUIENTE EJERCICIO
+  // ============================================================
   Future<void> _siguiente() async {
-    setState(() {
-      _idx++;
-    });
+    setState(() => _idx++);
 
     if (_idx >= _max) {
       await _guardarSesionYMostrarResumen();
@@ -257,12 +606,27 @@ class _RepasoScreenState extends State<RepasoScreen> with TickerProviderStateMix
     final uid = FirebaseAuth.instance.currentUser!.uid;
     await _planificarYSometerSiguiente(uid);
     
-    if (_ex != null) {
-      await _speak("Ejercicio ${_idx + 1}. ${_ex!.enunciado}");
+    if (_ex != null && _modoAudioInteractivo) {
+      await _flutterTts.stop();
+      await Future.delayed(const Duration(milliseconds: 400));
+      
+      await _speak("Ejercicio ${_idx + 1}.");
+      await Future.delayed(const Duration(milliseconds: 400));
+      
+      await _speak(_ex!.enunciado);
+      await Future.delayed(const Duration(milliseconds: 600));
+      
+      await _leerOpcionesYEscuchar();
     }
   }
 
+  // ============================================================
+  // GUARDAR SESIÓN Y MOSTRAR RESUMEN
+  // ============================================================
   Future<void> _guardarSesionYMostrarResumen() async {
+    await _stopListening();
+    await _flutterTts.stop();
+    
     final uid = FirebaseAuth.instance.currentUser!.uid;
     final dur = DateTime.now().difference(_inicio).inSeconds;
 
@@ -280,25 +644,24 @@ class _RepasoScreenState extends State<RepasoScreen> with TickerProviderStateMix
         'errores': _errores,
       });
     } catch (_) {}
-    // ===== NUEVO: Enviar notificación a docentes/tutores =====
-  try {
-    final userDoc = await FirebaseFirestore.instance.collection('usuarios').doc(uid).get();
-    final userName = userDoc.data()?['nombre'] ?? 'Estudiante';
     
-    final notifService = NotificationService();
-    await notifService.notificarSesionCompletada(
-      estudianteId: uid,
-      estudianteNombre: userName,
-      tema: widget.tema,
-      aciertos: _aciertos,
-      errores: _errores,
-      duracion: dur,
-    );
-  } catch (e) {
-    print('⚠️ Error enviando notificación: $e');
-  }
+    try {
+      final userDoc = await FirebaseFirestore.instance.collection('usuarios').doc(uid).get();
+      final userName = userDoc.data()?['nombre'] ?? 'Estudiante';
+      final notifService = NotificationService();
+      
+      await notifService.notificarSesionCompletada(
+        estudianteId: uid,
+        estudianteNombre: userName,
+        tema: widget.tema,
+        aciertos: _aciertos,
+        errores: _errores,
+        duracion: dur,
+      );
+    } catch (__) {}
 
     if (!mounted) return;
+    
     final min = dur ~/ 60;
     final seg = dur % 60;
     final porcentaje = ((_aciertos / _max) * 100).round();
@@ -320,6 +683,9 @@ class _RepasoScreenState extends State<RepasoScreen> with TickerProviderStateMix
     );
   }
 
+  // ============================================================
+  // DIÁLOGO DE RESUMEN
+  // ============================================================
   Widget _buildSummaryDialog(int min, int seg, int porcentaje) {
     final temaConfig = _getTemaConfig(widget.tema);
     
@@ -354,6 +720,7 @@ class _RepasoScreenState extends State<RepasoScreen> with TickerProviderStateMix
               ),
             ),
             const SizedBox(height: 20),
+            
             Text(
               porcentaje >= 90
                   ? '¡EXCELENTE!'
@@ -367,11 +734,14 @@ class _RepasoScreenState extends State<RepasoScreen> with TickerProviderStateMix
               ),
             ),
             const SizedBox(height: 20),
+            
             _buildStatRow(Icons.check_circle, 'Correctas', '$_aciertos/$_max', Colors.green),
             _buildStatRow(Icons.cancel, 'Incorrectas', '$_errores/$_max', Colors.red),
             _buildStatRow(Icons.timer, 'Tiempo', '${min > 0 ? '$min min ' : ''}$seg s', Colors.blue),
             _buildStatRow(Icons.percent, 'Porcentaje', '$porcentaje%', temaConfig.color),
+            
             const SizedBox(height: 24),
+            
             Container(
               width: double.infinity,
               height: 60,
@@ -442,9 +812,11 @@ class _RepasoScreenState extends State<RepasoScreen> with TickerProviderStateMix
   @override
   void dispose() {
     _flutterTts.stop();
+    _speechToText.stop();
     _progressController.dispose();
     _celebrationController.dispose();
     _shakeController.dispose();
+    _pulseController.dispose();
     super.dispose();
   }
 
@@ -501,6 +873,8 @@ class _RepasoScreenState extends State<RepasoScreen> with TickerProviderStateMix
 
                           const SizedBox(height: 24),
 
+                          if (_isListening) _buildListeningIndicator(temaConfig),
+
                           ..._ex!.opciones.map((o) => _buildOptionCard(o, temaConfig)),
                         ],
                       ),
@@ -545,8 +919,13 @@ class _RepasoScreenState extends State<RepasoScreen> with TickerProviderStateMix
             children: [
               IconButton(
                 icon: const Icon(Icons.arrow_back, size: 28),
-                onPressed: () => Navigator.pop(context),
+                onPressed: () async {
+                  await _stopListening();
+                  await _flutterTts.stop();
+                  Navigator.pop(context);
+                },
               ),
+              
               Expanded(
                 child: Column(
                   children: [
@@ -565,14 +944,73 @@ class _RepasoScreenState extends State<RepasoScreen> with TickerProviderStateMix
                   ],
                 ),
               ),
+              
+              Container(
+                decoration: BoxDecoration(
+                  color: _modoAudioInteractivo 
+                      ? config.color.withOpacity(0.1)
+                      : Colors.grey.shade200,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: IconButton(
+                  icon: Icon(
+                    _modoAudioInteractivo ? Icons.mic : Icons.mic_off,
+                    size: 28,
+                  ),
+                  color: _modoAudioInteractivo ? config.color : Colors.grey,
+                  onPressed: () async {
+                    await _stopListening();
+                    await _flutterTts.stop();
+                    
+                    setState(() {
+                      _modoAudioInteractivo = !_modoAudioInteractivo;
+                    });
+                    
+                    if (_modoAudioInteractivo && !_bloqueado && _ex != null) {
+                      await _speak("Modo de voz activado");
+                      await Future.delayed(const Duration(milliseconds: 400));
+                      
+                      await _speak("Ejercicio ${_idx + 1}. ${_ex!.enunciado}");
+                      await Future.delayed(const Duration(milliseconds: 500));
+                      
+                      await _leerOpcionesYEscuchar();
+                    } else {
+                      await _speak("Modo de voz desactivado");
+                    }
+                  },
+                ),
+              ),
+              const SizedBox(width: 8),
+              
               IconButton(
                 icon: const Icon(Icons.volume_up, size: 28),
                 color: config.color,
-                onPressed: () => _speak(_ex!.enunciado),
+                onPressed: () async {
+                  await _stopListening();
+                  await _flutterTts.stop();
+                  
+                  await _speak(_ex!.enunciado);
+                  await Future.delayed(const Duration(milliseconds: 500));
+                  
+                  if (_modoAudioInteractivo && !_bloqueado) {
+                    await _leerOpcionesYEscuchar();
+                  } else {
+                    String opcionesTexto = "Las opciones son: ";
+                    for (int i = 0; i < _ex!.opciones.length; i++) {
+                      opcionesTexto += "${_ex!.opciones[i]}";
+                      if (i < _ex!.opciones.length - 1) {
+                        opcionesTexto += ", ";
+                      }
+                    }
+                    await _speak(opcionesTexto);
+                  }
+                },
               ),
             ],
           ),
+          
           const SizedBox(height: 16),
+          
           Stack(
             children: [
               Container(
@@ -595,13 +1033,54 @@ class _RepasoScreenState extends State<RepasoScreen> with TickerProviderStateMix
               ),
             ],
           ),
+          
           const SizedBox(height: 8),
+          
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
             children: [
               _buildScoreBadge(Icons.check_circle, _aciertos, Colors.green),
               _buildScoreBadge(Icons.cancel, _errores, Colors.red),
             ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildListeningIndicator(_TemaConfig config) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 20),
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+      decoration: BoxDecoration(
+        color: config.color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: config.color, width: 2),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          ScaleTransition(
+            scale: _pulseAnimation,
+            child: Icon(
+              Icons.mic,
+              color: config.color,
+              size: 28,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Flexible(
+            child: Text(
+              _recognizedText.isEmpty 
+                  ? 'Escuchando...' 
+                  : 'Escuché: "$_recognizedText"',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                color: config.color,
+              ),
+              overflow: TextOverflow.ellipsis,
+            ),
           ),
         ],
       ),
@@ -706,7 +1185,7 @@ class _RepasoScreenState extends State<RepasoScreen> with TickerProviderStateMix
           color: bgColor ?? Colors.white,
           borderRadius: BorderRadius.circular(20),
           child: InkWell(
-            onTap: () => _contestar(opcion),
+            onTap: _modoAudioInteractivo ? null : () => _contestar(opcion),
             borderRadius: BorderRadius.circular(20),
             child: Container(
               padding: const EdgeInsets.all(20),

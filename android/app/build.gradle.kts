@@ -14,7 +14,6 @@ android {
         minSdk = 23
         targetSdk = 35
 
-        // Kotlin DSL usa '='
         multiDexEnabled = true
 
         versionCode = flutter.versionCode
@@ -24,7 +23,6 @@ android {
     ndkVersion = "27.0.12077973"
 
     compileOptions {
-        // Kotlin DSL: 'isCoreLibraryDesugaringEnabled'
         isCoreLibraryDesugaringEnabled = true
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
@@ -49,9 +47,8 @@ flutter {
 }
 
 dependencies {
-    // ✅ Kotlin DSL usa comillas y función
-    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")
-
-    // opcional: suele venir por el plugin, pero no estorba
+    // ✅ ACTUALIZADO A 2.1.4
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
+    
     implementation("org.jetbrains.kotlin:kotlin-stdlib")
 }

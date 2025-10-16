@@ -1,18 +1,48 @@
-// Reportes por estudiante con búsqueda en vivo + charts + vista previa + PDF
+// Reportes por estudiante con PDF PROFESIONAL
 import 'dart:async';
 import 'dart:math';
 import 'dart:typed_data';
+import 'dart:ui' as ui;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
-
-// Charts UI
 import 'package:syncfusion_flutter_charts/charts.dart';
-
-// PDF
 import 'package:pdf/widgets.dart' as pw;
 import 'package:pdf/pdf.dart';
 import 'package:printing/printing.dart';
+
+// -------------------- CLASES AUXILIARES (Dejar aquí para compilar) --------------------
+class _StudentHit {
+  final String id;
+  final String nombre;
+  _StudentHit({required this.id, required this.nombre});
+}
+
+class _TemaSerie {
+  final String tema;
+  final double valor;
+  _TemaSerie(this.tema, this.valor);
+}
+
+class _Pie {
+  final String label;
+  final int value;
+  _Pie(this.label, this.value);
+}
+
+class _TemaAcc {
+  final String tema;
+  final int intentos;
+  final int aciertos;
+  final double precision;
+  _TemaAcc({
+    required this.tema,
+    required this.intentos,
+    required this.aciertos,
+    required this.precision,
+  });
+}
+// -------------------- FIN CLASES AUXILIARES --------------------
 
 class DocenteReportesTab extends StatefulWidget {
   final String? initialStudentId;
@@ -31,32 +61,28 @@ class DocenteReportesTab extends StatefulWidget {
 }
 
 class _DocenteReportesTabState extends State<DocenteReportesTab> {
-  // --- BÚSQUEDA EN VIVO ---
   final _buscarCtrl = TextEditingController();
   Timer? _debounce;
   String _query = '';
 
-  // --- SELECCIÓN ---
   String? _estudianteId;
   String? _estudianteNombre;
 
-  // --- CARGA ---
   bool _loading = false;
 
-  // --- ACUMULADOS ---
+  final GlobalKey<SfCircularChartState> _pieChartKey = GlobalKey();
+  final GlobalKey<SfCartesianChartState> _barChartKey = GlobalKey();
+
   int _intentos = 0;
   int _aciertos = 0;
   int _errores = 0;
   int _segundos = 0;
 
-  // --- POR TEMA ---
-  // {tema: {intentos, aciertos, errores}}
   Map<String, Map<String, int>> _temaData = {};
 
   @override
   void initState() {
     super.initState();
-    // Si viene una selección inicial (desde Inicio), aplicarla
     if (widget.initialStudentId != null) {
       _estudianteId = widget.initialStudentId;
       _estudianteNombre = widget.initialStudentName ?? 'Estudiante';
@@ -66,17 +92,15 @@ class _DocenteReportesTabState extends State<DocenteReportesTab> {
     _buscarCtrl.addListener(_onQueryChanged);
   }
 
-  // 👇 CLAVE: si cambian las props (por ejemplo, seleccionas otro alumno desde Inicio),
-  // recargamos automáticamente.
   @override
   void didUpdateWidget(covariant DocenteReportesTab oldWidget) {
     super.didUpdateWidget(oldWidget);
     final changedId = widget.initialStudentId != oldWidget.initialStudentId;
-    final changedName = widget.initialStudentName != oldWidget.initialStudentName;
+    final changedName =
+        widget.initialStudentName != oldWidget.initialStudentName;
 
     if (changedId || changedName) {
       if (widget.initialStudentId == null) {
-        // Limpieza si te piden limpiar selección
         setState(() {
           _estudianteId = null;
           _estudianteNombre = null;
@@ -85,7 +109,6 @@ class _DocenteReportesTabState extends State<DocenteReportesTab> {
           _resetAcumulados();
         });
       } else {
-        // Nueva selección → refrescar
         setState(() {
           _estudianteId = widget.initialStudentId;
           _estudianteNombre = widget.initialStudentName ?? 'Estudiante';
@@ -105,7 +128,6 @@ class _DocenteReportesTabState extends State<DocenteReportesTab> {
     super.dispose();
   }
 
-  // ---------- Search ----------
   void _onQueryChanged() {
     _debounce?.cancel();
     _debounce = Timer(const Duration(milliseconds: 220), () {
@@ -131,7 +153,8 @@ class _DocenteReportesTabState extends State<DocenteReportesTab> {
                 nombre: (d.data()['nombre'] ?? 'Estudiante').toString(),
               ))
           .toList();
-    } catch (_) {
+    } catch (e) {
+      debugPrint('Error en la búsqueda: $e');
       return const [];
     }
   }
@@ -145,6 +168,9 @@ class _DocenteReportesTabState extends State<DocenteReportesTab> {
     });
     await _cargar();
     FocusScope.of(context).unfocus();
+    if (widget.onClearSelection != null) {
+      widget.onClearSelection!();
+    }
   }
 
   void _resetAcumulados() {
@@ -155,7 +181,6 @@ class _DocenteReportesTabState extends State<DocenteReportesTab> {
     _temaData = {};
   }
 
-  // ---------- Carga datos ----------
   Future<void> _cargar() async {
     if (_estudianteId == null) return;
     setState(() {
@@ -179,7 +204,6 @@ class _DocenteReportesTabState extends State<DocenteReportesTab> {
         _segundos += dur;
 
         if (ejercicios.isEmpty) {
-          // Sesión tipo “resumen por tema”
           final tema = (data['tema'] as String?)?.trim();
           if (tema != null && tema.isNotEmpty) {
             final ac = (data['aciertos'] ?? 0) as num;
@@ -198,7 +222,6 @@ class _DocenteReportesTabState extends State<DocenteReportesTab> {
           continue;
         }
 
-        // Sesión con detalle
         for (final e in ejercicios) {
           final tema = (e['tema'] as String?)?.trim() ?? 'desconocido';
           final correcto = e['correcto'] == true;
@@ -229,7 +252,6 @@ class _DocenteReportesTabState extends State<DocenteReportesTab> {
     }
   }
 
-  // ---------- Utils ----------
   String _fmt(int s) {
     final m = s ~/ 60;
     final ss = s % 60;
@@ -237,7 +259,6 @@ class _DocenteReportesTabState extends State<DocenteReportesTab> {
     return '${m}m ${ss}s';
   }
 
-  // Recomendaciones simples
   List<String> _buildRecomendaciones() {
     final recs = <String>[];
     if (_temaData.isEmpty) {
@@ -276,127 +297,338 @@ class _DocenteReportesTabState extends State<DocenteReportesTab> {
     return recs;
   }
 
-  // ---------- PDF ----------
-  Future<void> _downloadPdf() async {
-    if (_estudianteNombre == null) return;
-    final bytes = await _buildPdfBytes(_estudianteNombre!, DateTime.now());
-    await Printing.sharePdf(bytes: bytes, filename: 'reporte_${_estudianteNombre!}.pdf');
+  Future<Uint8List?> _captureChart(GlobalKey chartKey) async {
+    try {
+      final dynamic chartState = chartKey.currentState;
+      if (chartState != null) {
+        final ui.Image image = await chartState.toImage(pixelRatio: 3.0);
+        final ByteData? byteData =
+            await image.toByteData(format: ui.ImageByteFormat.png);
+        return byteData?.buffer.asUint8List();
+      }
+    } catch (e) {
+      debugPrint('Error al capturar el gráfico: $e');
+      return null;
+    }
+    return null;
   }
 
-  Future<Uint8List> _buildPdfBytes(String nombre, DateTime fecha) async {
+  Future<void> _downloadPdf() async {
+    if (_estudianteNombre == null) return;
+
+    final pieChartBytes = await _captureChart(_pieChartKey);
+    final barChartBytes = await _captureChart(_barChartKey);
+
+    final bytes = await _buildPdfBytes(
+      _estudianteNombre!,
+      DateTime.now(),
+      pieChartBytes: pieChartBytes,
+      barChartBytes: barChartBytes,
+    );
+    await Printing.sharePdf(
+        bytes: bytes, filename: 'reporte_${_estudianteNombre!}.pdf');
+  }
+
+  Future<Uint8List> _buildPdfBytes(String nombre, DateTime fecha, {
+    Uint8List? pieChartBytes,
+    Uint8List? barChartBytes,
+  }) async {
     final doc = pw.Document();
     final acc = _intentos == 0 ? 0.0 : _aciertos / _intentos;
-    final recs = _buildRecomendaciones();
+    final recs =
+        _buildRecomendaciones().map((r) => r.replaceAll('**', '')).toList();
 
-    pw.Widget _kv(String k, String v) => pw.Padding(
-          padding: const pw.EdgeInsets.symmetric(vertical: 2),
-          child: pw.Row(
-            mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-            children: [pw.Text(k), pw.Text(v)],
-          ),
-        );
+    const primary = PdfColor.fromInt(0xFF1976D2);
+    const success = PdfColor.fromInt(0xFF388E3C);
+    const error = PdfColor.fromInt(0xFFD32F2F);
+    const warning = PdfColor.fromInt(0xFFF57C00);
+    const gray = PdfColor.fromInt(0xFF616161);
+    const lightGray = PdfColor.fromInt(0xFFF5F5F5);
 
-    pw.Widget _bar(int value, int max, {int height = 8}) {
-      final m = max <= 0 ? 1 : max;
-      final w = 300.0 * (value / m);
-      return pw.Container(
-        width: 300,
-        height: height.toDouble(),
-        decoration: pw.BoxDecoration(
-          color: const PdfColor(0.9, 0.9, 0.9),
-          borderRadius: pw.BorderRadius.circular(4),
-        ),
-        child: pw.Container(
-          width: w,
-          height: height.toDouble(),
-          decoration: pw.BoxDecoration(
-            color: const PdfColor(0.2, 0.6, 0.9),
-            borderRadius: pw.BorderRadius.circular(4),
+    pw.Widget _buildStatColumn(String label, String value, PdfColor color) {
+      return pw.Column(
+        children: [
+          pw.Text(
+            value,
+            style: pw.TextStyle(
+              fontSize: 20,
+              fontWeight: pw.FontWeight.bold,
+              color: color,
+            ),
           ),
-        ),
+          pw.SizedBox(height: 4),
+          pw.Text(
+            label,
+            style: pw.TextStyle(
+              fontSize: 9,
+              color: const PdfColor.fromInt(0xFF616161),
+            ),
+          ),
+        ],
       );
     }
 
     doc.addPage(
       pw.MultiPage(
-        build: (_) => [
-          pw.Header(
-            level: 0,
-            child: pw.Text('Reporte de Progreso',
-                style: pw.TextStyle(fontSize: 22, fontWeight: pw.FontWeight.bold)),
-          ),
-          pw.Text('Estudiante: $nombre'),
-          pw.Text('Fecha: ${fecha.toLocal()}'),
-          pw.SizedBox(height: 10),
+        pageFormat: PdfPageFormat.a4,
+        margin: const pw.EdgeInsets.all(40),
+        build: (context) => [
+          // 1. HEADER (TÍTULO Y RESUMEN DE PRECISIÓN)
           pw.Container(
-            padding: const pw.EdgeInsets.all(10),
+            padding: const pw.EdgeInsets.all(20),
             decoration: pw.BoxDecoration(
-              border: pw.Border.all(width: .5),
+              color: primary,
+              borderRadius: pw.BorderRadius.circular(8),
+            ),
+            child: pw.Row(
+              mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+              children: [
+                pw.Column(
+                  crossAxisAlignment: pw.CrossAxisAlignment.start,
+                  children: [
+                    pw.Text(
+                      'REPORTE DE PROGRESO ACADÉMICO',
+                      style: pw.TextStyle(
+                        fontSize: 20,
+                        fontWeight: pw.FontWeight.bold,
+                        color: PdfColors.white,
+                      ),
+                    ),
+                    pw.SizedBox(height: 8),
+                    pw.Text(
+                      'Estudiante: $nombre',
+                      style: pw.TextStyle(fontSize: 12, color: PdfColors.white),
+                    ),
+                    pw.Text(
+                      'Fecha: ${fecha.toLocal().toString().substring(0, 16)}',
+                      style: pw.TextStyle(fontSize: 11, color: PdfColors.white),
+                    ),
+                  ],
+                ),
+                pw.Container(
+                  padding: const pw.EdgeInsets.all(12),
+                  decoration: pw.BoxDecoration(
+                    color: PdfColors.white,
+                    borderRadius: pw.BorderRadius.circular(8),
+                  ),
+                  child: pw.Column(
+                    children: [
+                      pw.Text(
+                        '${(acc * 100).toStringAsFixed(0)}%',
+                        style: pw.TextStyle(
+                          fontSize: 24,
+                          fontWeight: pw.FontWeight.bold,
+                          color: acc >= 0.7 ? success : warning,
+                        ),
+                      ),
+                      pw.Text(
+                        'Precisión',
+                        style: pw.TextStyle(fontSize: 9, color: gray),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          pw.SizedBox(height: 20),
+
+          // 2. RESUMEN ESTADÍSTICO
+          pw.Text(
+            'RESUMEN ESTADÍSTICO',
+            style: pw.TextStyle(
+              fontSize: 14,
+              fontWeight: pw.FontWeight.bold,
+              color: primary,
+            ),
+          ),
+          pw.SizedBox(height: 10),
+
+          pw.Container(
+            padding: const pw.EdgeInsets.all(15),
+            decoration: pw.BoxDecoration(
+              border: pw.Border.all(color: lightGray, width: 2),
+              borderRadius: pw.BorderRadius.circular(8),
+            ),
+            child: pw.Row(
+              mainAxisAlignment: pw.MainAxisAlignment.spaceAround,
+              children: [
+                _buildStatColumn('Intentos', '$_intentos', primary),
+                _buildStatColumn('Aciertos', '$_aciertos', success),
+                _buildStatColumn('Errores', '$_errores', error),
+                _buildStatColumn('Tiempo', _fmt(_segundos), warning),
+              ],
+            ),
+          ),
+
+          pw.SizedBox(height: 20),
+
+          // 3. ANÁLISIS GRÁFICO (Aseguramos que estén aquí, en la primera página)
+          if (pieChartBytes != null || barChartBytes != null) ...[
+            pw.Text(
+              'ANÁLISIS GRÁFICO',
+              style: pw.TextStyle(
+                fontSize: 14,
+                fontWeight: pw.FontWeight.bold,
+                color: primary,
+              ),
+            ),
+            pw.SizedBox(height: 10),
+          ],
+
+          if (pieChartBytes != null)
+            pw.Container(
+              padding: const pw.EdgeInsets.all(10),
+              margin: const pw.EdgeInsets.only(bottom: 15),
+              decoration: pw.BoxDecoration(
+                border: pw.Border.all(color: lightGray, width: 1),
+              ),
+              child: pw.Column(
+                children: [
+                  pw.Text(
+                    'Distribución Global (Aciertos/Errores)',
+                    style: pw.TextStyle(
+                        fontSize: 11, fontWeight: pw.FontWeight.bold),
+                  ),
+                  pw.SizedBox(height: 5),
+                  pw.Center(
+                    child: pw.Image(pw.MemoryImage(pieChartBytes), height: 180),
+                  ),
+                ],
+              ),
+            ),
+
+          if (barChartBytes != null)
+            pw.Container(
+              padding: const pw.EdgeInsets.all(10),
+              decoration: pw.BoxDecoration(
+                border: pw.Border.all(color: lightGray, width: 1),
+              ),
+              child: pw.Column(
+                children: [
+                  pw.Text(
+                    'Desempeño por Tema',
+                    style: pw.TextStyle(
+                        fontSize: 11, fontWeight: pw.FontWeight.bold),
+                  ),
+                  pw.SizedBox(height: 5),
+                  pw.Center(
+                    child: pw.Image(pw.MemoryImage(barChartBytes), height: 180),
+                  ),
+                ],
+              ),
+            ),
+            
+          // Usar PageBreak si el contenido posterior debe ir forzosamente en otra página, 
+          // pero como los gráficos son más pequeños ahora, dejaremos que el flujo normal continúe
+          // para optimizar el espacio, o podrías agregar un pw.NewPage() si lo requieres.
+
+          pw.SizedBox(height: 20),
+
+          // 4. DETALLE POR TEMA (Tabla)
+          if (_temaData.isNotEmpty) ...[
+            pw.Text(
+              'DETALLE POR TEMA',
+              style: pw.TextStyle(
+                fontSize: 14,
+                fontWeight: pw.FontWeight.bold,
+                color: primary,
+              ),
+            ),
+            pw.SizedBox(height: 10),
+
+            pw.Table.fromTextArray(
+              headerStyle: pw.TextStyle(
+                fontWeight: pw.FontWeight.bold,
+                fontSize: 10,
+                color: PdfColors.white,
+              ),
+              headerDecoration: const pw.BoxDecoration(color: primary),
+              cellStyle: const pw.TextStyle(fontSize: 9),
+              cellAlignment: pw.Alignment.centerLeft,
+              headerAlignment: pw.Alignment.centerLeft,
+              cellPadding: const pw.EdgeInsets.all(8),
+              border: pw.TableBorder.all(color: lightGray),
+              headers: ['Tema', 'Intentos', 'Aciertos', 'Errores', 'Precisión'],
+              data: _temaData.entries.map((e) {
+                final it = e.value['intentos'] ?? 0;
+                final ac = e.value['aciertos'] ?? 0;
+                final er = e.value['errores'] ?? 0;
+                final pct = it == 0 ? 0.0 : ac / it;
+                return [
+                  e.key,
+                  '$it',
+                  '$ac',
+                  '$er',
+                  '${(pct * 100).toStringAsFixed(1)}%',
+                ];
+              }).toList(),
+            ),
+          ],
+
+          pw.SizedBox(height: 20),
+
+          // 5. RECOMENDACIONES PEDAGÓGICAS
+          pw.Text(
+            'RECOMENDACIONES PEDAGÓGICAS',
+            style: pw.TextStyle(
+              fontSize: 14,
+              fontWeight: pw.FontWeight.bold,
+              color: primary,
+            ),
+          ),
+          pw.SizedBox(height: 10),
+
+          pw.Container(
+            padding: const pw.EdgeInsets.all(15),
+            decoration: pw.BoxDecoration(
+              color: lightGray,
               borderRadius: pw.BorderRadius.circular(8),
             ),
             child: pw.Column(
               crossAxisAlignment: pw.CrossAxisAlignment.start,
-              children: [
-                _kv('Intentos', '$_intentos'),
-                _kv('Aciertos', '$_aciertos'),
-                _kv('Errores', '$_errores'),
-                _kv('Tiempo', _fmt(_segundos)),
-                _kv('Precisión', '${(acc * 100).toStringAsFixed(0)}%'),
-              ],
+              children: recs.isEmpty
+                  ? [
+                      pw.Text('Sin recomendaciones específicas en este momento.',
+                          style: const pw.TextStyle(fontSize: 10))
+                    ]
+                  : recs
+                      .map((r) => pw.Padding(
+                            padding: const pw.EdgeInsets.only(bottom: 6),
+                            child: pw.Row(
+                              crossAxisAlignment: pw.CrossAxisAlignment.start,
+                              children: [
+                                pw.Container(
+                                  width: 6,
+                                  height: 6,
+                                  margin:
+                                      const pw.EdgeInsets.only(top: 3, right: 8),
+                                  decoration: const pw.BoxDecoration(
+                                    color: primary,
+                                    shape: pw.BoxShape.circle,
+                                  ),
+                                ),
+                                pw.Expanded(
+                                  child: pw.Text(r,
+                                      style: const pw.TextStyle(fontSize: 10)),
+                                ),
+                              ],
+                            ),
+                          ))
+                      .toList(),
             ),
           ),
-          pw.SizedBox(height: 12),
-          pw.Text('Desempeño por tema', style: pw.TextStyle(fontWeight: pw.FontWeight.bold)),
-          pw.SizedBox(height: 6),
-          if (_temaData.isEmpty)
-            pw.Text('Sin datos por tema')
-          else
-            ..._temaData.entries.map((e) {
-              final it = e.value['intentos'] ?? 0;
-              final acT = e.value['aciertos'] ?? 0;
-              final erT = e.value['errores'] ?? 0;
-              final maxv = [it, acT, erT].reduce(max);
-              final pct = it == 0 ? 0.0 : acT / it;
-              return pw.Container(
-                margin: const pw.EdgeInsets.only(bottom: 8),
-                padding: const pw.EdgeInsets.all(8),
-                decoration: pw.BoxDecoration(
-                  border: pw.Border.all(width: .5),
-                  borderRadius: pw.BorderRadius.circular(6),
-                ),
-                child: pw.Column(
-                  crossAxisAlignment: pw.CrossAxisAlignment.start,
-                  children: [
-                    pw.Text(e.key, style: pw.TextStyle(fontWeight: pw.FontWeight.bold)),
-                    pw.SizedBox(height: 4),
-                    pw.Text('Intentos: $it'),
-                    _bar(it, maxv),
-                    pw.SizedBox(height: 4),
-                    pw.Text('Aciertos: $acT'),
-                    _bar(acT, maxv),
-                    pw.SizedBox(height: 4),
-                    pw.Text('Errores: $erT'),
-                    _bar(erT, maxv),
-                    pw.SizedBox(height: 4),
-                    pw.Text('Precisión: ${(pct * 100).toStringAsFixed(0)}%'),
-                  ],
-                ),
-              );
-            }),
-          pw.SizedBox(height: 12),
-          pw.Text('Recomendaciones del sistema',
-              style: pw.TextStyle(fontWeight: pw.FontWeight.bold)),
-          pw.SizedBox(height: 4),
-          if (recs.isEmpty)
-            pw.Text('Sin recomendaciones por el momento.')
-          else
-            pw.Bullet(
-              text: recs.map((r) => r.replaceAll('**', '')).join('\n'),
-            ),
-          pw.SizedBox(height: 12),
+
+          // *** SE ELIMINÓ la "NOTA METODOLÓGICA" y el texto de abajo, como solicitaste. ***
+          
+          pw.SizedBox(height: 15),
+          pw.Divider(color: lightGray),
+          pw.SizedBox(height: 5),
           pw.Text(
-            'Notas: la dificultad se adapta con un esquema tipo Q-Learning: aciertos → sube nivel, errores → baja nivel, buscando mantener un reto adecuado.',
-            style: const pw.TextStyle(fontSize: 10),
+            'Reporte generado automáticamente', // Texto simple de cierre
+            style: pw.TextStyle(fontSize: 8, color: gray),
+            textAlign: pw.TextAlign.center,
           ),
         ],
       ),
@@ -405,14 +637,44 @@ class _DocenteReportesTabState extends State<DocenteReportesTab> {
     return doc.save();
   }
 
-  // ---------- Vista previa ----------
+  pw.Widget _buildStatColumn(String label, String value, PdfColor color) {
+    return pw.Column(
+      children: [
+        pw.Text(
+          value,
+          style: pw.TextStyle(
+            fontSize: 20,
+            fontWeight: pw.FontWeight.bold,
+            color: color,
+          ),
+        ),
+        pw.SizedBox(height: 4),
+        pw.Text(
+          label,
+          style: pw.TextStyle(
+            fontSize: 9,
+            color: const PdfColor.fromInt(0xFF616161),
+          ),
+        ),
+      ],
+    );
+  }
+
   Future<void> _preview() async {
     if (_estudianteNombre == null) return;
-    final bytes = await _buildPdfBytes(_estudianteNombre!, DateTime.now());
+
+    final pieChartBytes = await _captureChart(_pieChartKey);
+    final barChartBytes = await _captureChart(_barChartKey);
+
+    final bytes = await _buildPdfBytes(
+      _estudianteNombre!,
+      DateTime.now(),
+      pieChartBytes: pieChartBytes,
+      barChartBytes: barChartBytes,
+    );
     await Printing.layoutPdf(onLayout: (_) async => bytes);
   }
 
-  // ---------- UI ----------
   @override
   Widget build(BuildContext context) {
     final acc = _intentos == 0 ? 0.0 : _aciertos / _intentos;
@@ -420,20 +682,35 @@ class _DocenteReportesTabState extends State<DocenteReportesTab> {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        // Búsqueda en vivo dentro del TextField
         TextField(
           controller: _buscarCtrl,
           decoration: InputDecoration(
             labelText: 'Buscar estudiante por nombre',
             hintText: 'Escribe para buscar…',
             prefixIcon: const Icon(Icons.search),
+            suffixIcon: _estudianteId != null
+                ? IconButton(
+                    icon: const Icon(Icons.clear),
+                    onPressed: () {
+                      setState(() {
+                        _estudianteId = null;
+                        _estudianteNombre = null;
+                        _buscarCtrl.clear();
+                        _query = '';
+                        _resetAcumulados();
+                      });
+                      if (widget.onClearSelection != null) {
+                        widget.onClearSelection!();
+                      }
+                    },
+                  )
+                : null,
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
           ),
           textInputAction: TextInputAction.search,
         ),
         const SizedBox(height: 8),
 
-        // Sugerencias
         if (_query.isNotEmpty &&
             (_estudianteId == null || _buscarCtrl.text != _estudianteNombre))
           FutureBuilder<List<_StudentHit>>(
@@ -447,10 +724,13 @@ class _DocenteReportesTabState extends State<DocenteReportesTab> {
                     child: LinearProgressIndicator(minHeight: 2),
                   );
                 }
-                return const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 8),
-                  child: Text('Sin coincidencias'),
-                );
+                if (_query.length > 2) {
+                  return const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 8),
+                    child: Text('Sin coincidencias'),
+                  );
+                }
+                return const SizedBox.shrink();
               }
               return Card(
                 elevation: 2,
@@ -495,7 +775,8 @@ class _DocenteReportesTabState extends State<DocenteReportesTab> {
 
         const SizedBox(height: 16),
         if (_estudianteId == null)
-          const Center(child: Text('Selecciona un estudiante para ver sus reportes'))
+          const Center(
+              child: Text('Selecciona un estudiante para ver sus reportes'))
         else if (_loading)
           const Center(
             child: Padding(
@@ -504,7 +785,6 @@ class _DocenteReportesTabState extends State<DocenteReportesTab> {
             ),
           )
         else ...[
-          // Resumen general
           Card(
             child: ListTile(
               leading: const Icon(Icons.emoji_events, color: Colors.amber),
@@ -522,7 +802,6 @@ class _DocenteReportesTabState extends State<DocenteReportesTab> {
 
           const SizedBox(height: 12),
 
-          // ====== GRÁFICOS ======
           if (_intentos > 0)
             Card(
               elevation: 2,
@@ -530,11 +809,14 @@ class _DocenteReportesTabState extends State<DocenteReportesTab> {
                 padding: const EdgeInsets.all(12),
                 child: Column(
                   children: [
-                    const Text('Precisión global', style: TextStyle(fontWeight: FontWeight.bold)),
+                    const Text('Precisión global',
+                        style: TextStyle(fontWeight: FontWeight.bold)),
                     SizedBox(
                       height: 220,
                       child: SfCircularChart(
-                        legend: const Legend(isVisible: true, position: LegendPosition.bottom),
+                        key: _pieChartKey,
+                        legend: const Legend(
+                            isVisible: true, position: LegendPosition.bottom),
                         series: <DoughnutSeries<_Pie, String>>[
                           DoughnutSeries<_Pie, String>(
                             dataSource: [
@@ -543,7 +825,8 @@ class _DocenteReportesTabState extends State<DocenteReportesTab> {
                             ],
                             xValueMapper: (_Pie p, _) => p.label,
                             yValueMapper: (_Pie p, _) => p.value,
-                            dataLabelSettings: const DataLabelSettings(isVisible: true),
+                            dataLabelSettings:
+                                const DataLabelSettings(isVisible: true),
                             innerRadius: '55%',
                           ),
                         ],
@@ -563,10 +846,12 @@ class _DocenteReportesTabState extends State<DocenteReportesTab> {
                 padding: const EdgeInsets.all(12),
                 child: Column(
                   children: [
-                    const Text('Desempeño por tema', style: TextStyle(fontWeight: FontWeight.bold)),
+                    const Text('Desempeño por tema',
+                        style: TextStyle(fontWeight: FontWeight.bold)),
                     SizedBox(
                       height: 260,
                       child: SfCartesianChart(
+                        key: _barChartKey,
                         primaryXAxis: const CategoryAxis(),
                         legend: const Legend(isVisible: true),
                         series: <CartesianSeries<dynamic, dynamic>>[
@@ -575,21 +860,24 @@ class _DocenteReportesTabState extends State<DocenteReportesTab> {
                             dataSource: _toSeries('intentos'),
                             xValueMapper: (_TemaSerie s, _) => s.tema,
                             yValueMapper: (_TemaSerie s, _) => s.valor,
-                            dataLabelSettings: const DataLabelSettings(isVisible: true),
+                            dataLabelSettings:
+                                const DataLabelSettings(isVisible: true),
                           ),
                           ColumnSeries<_TemaSerie, String>(
                             name: 'Aciertos',
                             dataSource: _toSeries('aciertos'),
                             xValueMapper: (_TemaSerie s, _) => s.tema,
                             yValueMapper: (_TemaSerie s, _) => s.valor,
-                            dataLabelSettings: const DataLabelSettings(isVisible: true),
+                            dataLabelSettings:
+                                const DataLabelSettings(isVisible: true),
                           ),
                           ColumnSeries<_TemaSerie, String>(
                             name: 'Errores',
                             dataSource: _toSeries('errores'),
                             xValueMapper: (_TemaSerie s, _) => s.tema,
                             yValueMapper: (_TemaSerie s, _) => s.valor,
-                            dataLabelSettings: const DataLabelSettings(isVisible: true),
+                            dataLabelSettings:
+                                const DataLabelSettings(isVisible: true),
                           ),
                         ],
                       ),
@@ -601,7 +889,6 @@ class _DocenteReportesTabState extends State<DocenteReportesTab> {
 
           const SizedBox(height: 12),
 
-          // Recomendaciones
           Card(
             elevation: 2,
             child: Padding(
@@ -618,7 +905,9 @@ class _DocenteReportesTabState extends State<DocenteReportesTab> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             const Text('• '),
-                            Expanded(child: Text(r)),
+                            Expanded(
+                                child: Text(r.replaceAll(
+                                    '**', ''))), // Quitar formato
                           ],
                         ),
                       )),
@@ -633,7 +922,6 @@ class _DocenteReportesTabState extends State<DocenteReportesTab> {
     );
   }
 
-  // --- helpers de gráficos UI ---
   List<_TemaSerie> _toSeries(String campo) {
     final list = <_TemaSerie>[];
     _temaData.forEach((tema, m) {
@@ -641,35 +929,4 @@ class _DocenteReportesTabState extends State<DocenteReportesTab> {
     });
     return list;
   }
-}
-
-class _StudentHit {
-  final String id;
-  final String nombre;
-  _StudentHit({required this.id, required this.nombre});
-}
-
-class _TemaSerie {
-  final String tema;
-  final double valor;
-  _TemaSerie(this.tema, this.valor);
-}
-
-class _Pie {
-  final String label;
-  final int value;
-  _Pie(this.label, this.value);
-}
-
-class _TemaAcc {
-  final String tema;
-  final int intentos;
-  final int aciertos;
-  final double precision;
-  _TemaAcc({
-    required this.tema,
-    required this.intentos,
-    required this.aciertos,
-    required this.precision,
-  });
 }

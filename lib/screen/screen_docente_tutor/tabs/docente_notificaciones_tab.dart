@@ -66,7 +66,6 @@ class _DocenteNotificacionesTabState extends State<DocenteNotificacionesTab> {
   final fecha = data['fecha'] as Timestamp?;
   final fechaFormat = _formatFecha(fecha);
 
-  // 1. SOLICITUD APROBADA (Dirigido al Docente/Tutor)
   if (tipo == 'solicitud_aprobada') {
     return Dismissible(
       key: Key(doc.id),
@@ -86,7 +85,6 @@ class _DocenteNotificacionesTabState extends State<DocenteNotificacionesTab> {
             if (!leida) {
               await _notifService.marcarComoLeida(doc.id);
             }
-            // TO DO: Navegar al perfil o al home del docente
           },
           child: ListTile(
             contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -116,7 +114,6 @@ class _DocenteNotificacionesTabState extends State<DocenteNotificacionesTab> {
     );
   }
 
-  // 2. SOLICITUD RECHAZADA (Dirigido al Docente/Tutor)
   else if (tipo == 'solicitud_rechazada') {
     final motivo = data['motivo'] as String? ?? 'Rechazo sin motivo especificado.';
     return Dismissible(
@@ -166,7 +163,6 @@ class _DocenteNotificacionesTabState extends State<DocenteNotificacionesTab> {
     );
   }
 
-  // 3. SOLICITUD DOCENTE (Dirigido a Administradores)
   else if (tipo == 'solicitud_docente') {
     final nombreDocente = data['nombreDocente'] as String? ?? 'Docente';
     final institucion = data['institucion'] as String? ?? 'una institución';
@@ -234,8 +230,6 @@ class _DocenteNotificacionesTabState extends State<DocenteNotificacionesTab> {
     );
   }
 
-  // 4. SESIÓN COMPLETADA (Caso Estudiante/Docente Vinculado)
-  // Esto se ejecuta si el 'tipo' es 'sesion_completada' o si es un 'tipo' desconocido.
   { 
     final estudianteNombre = data['estudianteNombre'] as String? ?? 'Estudiante';
     final tema = data['tema'] as String? ?? 'Tema';

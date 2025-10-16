@@ -15,7 +15,6 @@ class _DocentesSolicitudesTabState extends State<DocentesSolicitudesTab> {
   final _userCol = FirebaseFirestore.instance.collection('usuarios');
   final _solicitudService = SolicitudDocenteService();
 
-  // Modifica el método _aprobarSolicitud:
 Future<void> _aprobarSolicitud(String solicitudId, String uid) async {
   try {
     final batch = FirebaseFirestore.instance.batch();
@@ -44,7 +43,7 @@ Future<void> _aprobarSolicitud(String solicitudId, String uid) async {
 
     await batch.commit();
 
-    // ===== NUEVO: Notificar al docente aprobado =====
+
     await _solicitudService.notificarSolicitudAprobada(
       docenteId: uid,
       nombreDocente: nombreDocente,
@@ -62,11 +61,9 @@ Future<void> _aprobarSolicitud(String solicitudId, String uid) async {
 
   _View _view = _View.solicitudes;
 
-  
-  // Modifica el método _rechazarSolicitud:
+
 Future<void> _rechazarSolicitud(String solicitudId) async {
   try {
-    // Obtener datos antes de rechazar
     final solicitudDoc = await _solCol.doc(solicitudId).get();
     final data = solicitudDoc.data();
     final uid = data?['uid'] as String?;
@@ -78,7 +75,6 @@ Future<void> _rechazarSolicitud(String solicitudId) async {
       'rechazadoEn': FieldValue.serverTimestamp(),
     });
 
-    // ===== NUEVO: Notificar al docente rechazado =====
     if (uid != null) {
       await _solicitudService.notificarSolicitudRechazada(
         docenteId: uid,
@@ -196,9 +192,8 @@ Future<void> _rechazarSolicitud(String solicitudId) async {
     );
   }
 
-  // -------- Solicitudes (pendientes) --------
+  // -------- Solicitudes--------
   Widget _buildSolicitudes() {
-    // Sin orderBy para no exigir índice; ordenamos en memoria ↓
     final stream =
         _solCol.where('estado', isEqualTo: 'pendiente').snapshots();
 
@@ -257,7 +252,7 @@ Future<void> _rechazarSolicitud(String solicitudId) async {
 
   // -------- Gestión (activos/bloqueados) --------
   Widget _buildGestion() {
-    // Traemos todos los 'docente' y filtramos estado en memoria
+
     final stream = _userCol.where('rol', isEqualTo: 'docente').snapshots();
 
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
@@ -279,7 +274,6 @@ Future<void> _rechazarSolicitud(String solicitudId) async {
           return est == 'activo' || est == 'bloqueado';
         }).toList();
 
-        // Orden por nombre en memoria
         docs.sort((a, b) {
           final na = (a.data()['nombre'] ?? '').toString().toLowerCase();
           final nb = (b.data()['nombre'] ?? '').toString().toLowerCase();
@@ -372,7 +366,7 @@ Future<void> _rechazarSolicitud(String solicitudId) async {
 
   // -------- Papelera (eliminados) --------
   Widget _buildPapelera() {
-    // Traemos todos los 'docente' y filtramos estado en memoria
+
     final stream = _userCol.where('rol', isEqualTo: 'docente').snapshots();
 
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
@@ -389,7 +383,6 @@ Future<void> _rechazarSolicitud(String solicitudId) async {
             snap.data?.docs ?? const [])
           ..retainWhere((d) => (d.data()['estado'] ?? '') == 'eliminado');
 
-        // Orden por eliminadoEn desc (si no existe, al final)
         docs.sort((a, b) {
           final ta = a.data()['eliminadoEn'];
           final tb = b.data()['eliminadoEn'];

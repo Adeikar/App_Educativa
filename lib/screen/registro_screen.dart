@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../services/firestore_service.dart';
-import '../services/solicitud_docente_service.dart'; // ← NUEVO IMPORT
+import '../services/solicitud_docente_service.dart';
 
 class RegistroScreen extends StatefulWidget {
   const RegistroScreen({super.key});
@@ -161,7 +161,6 @@ class _RegistroScreenState extends State<RegistroScreen> {
           'actualizadoEn': FieldValue.serverTimestamp(),
         });
 
-        // ===== NUEVO: Notificar a administradores =====
         try {
           await _solicitudService.notificarNuevaSolicitud(
             solicitudId: docRef.id,
@@ -169,14 +168,10 @@ class _RegistroScreenState extends State<RegistroScreen> {
             correo: _emailCtrl.text.trim(),
             institucion: _instCtrl.text.trim(),
           );
-          print('✅ Notificación enviada a administradores');
-        } catch (e) {
-          // No bloqueamos el registro si falla la notificación
-          print('⚠️ Error al enviar notificación (no crítico): $e');
-        }
+
+        } catch (__) {}
       }
 
-      // 5) Verificación de correo y salida
       if (!cred.user!.emailVerified) {
         await cred.user!.sendEmailVerification();
         await _auth.signOut();

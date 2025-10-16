@@ -1,4 +1,3 @@
-// lib/services/q_learning_service.dart
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'dart:math';
 import './exercise_engine.dart'; 

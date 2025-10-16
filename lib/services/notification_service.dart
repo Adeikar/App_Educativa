@@ -1,4 +1,3 @@
-// lib/services/notification_service.dart
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'fcm_service.dart';
@@ -6,7 +5,6 @@ import 'fcm_service.dart';
 class NotificationService {
   final FirebaseFirestore _db = FirebaseFirestore.instance;
 
-  // Crea notificación cuando estudiante termina sesión
   Future<void> notificarSesionCompletada({
     required String estudianteId,
     required String estudianteNombre,
@@ -16,7 +14,6 @@ class NotificationService {
     required int duracion,
   }) async {
     try {
-      // 1. Buscar docentes/tutores vinculados a este estudiante
       final vinculaciones = await _db
           .collection('vinculaciones')
           .where('estudianteId', isEqualTo: estudianteId)
@@ -24,11 +21,9 @@ class NotificationService {
           .get();
 
       if (vinculaciones.docs.isEmpty) {
-        print('ℹ️ No hay docentes/tutores vinculados');
         return;
       }
 
-      // 2. Crear notificación para cada docente/tutor vinculado
       final timestamp = FieldValue.serverTimestamp();
       final total = aciertos + errores;
       final porcentaje = total > 0 ? ((aciertos / total) * 100).round() : 0;
@@ -39,7 +34,6 @@ class NotificationService {
         final docenteId = vinc.data()['docenteId'] as String?;
         final tutorId = vinc.data()['tutorId'] as String?;
 
-        // Notificar al docente
         if (docenteId != null) {
           await _crearNotificacion(
             destinatarioId: docenteId,
@@ -56,7 +50,6 @@ class NotificationService {
           destinatarios.add(docenteId);
         }
 
-        // Notificar al tutor
         if (tutorId != null) {
           await _crearNotificacion(
             destinatarioId: tutorId,
@@ -73,8 +66,7 @@ class NotificationService {
           destinatarios.add(tutorId);
         }
       }
-
-      // 3. NUEVO: Enviar notificación push (FCM)
+      // Enviar notificación push
       if (destinatarios.isNotEmpty) {
         final fcmService = FCMService();
         await fcmService.sendNotificationToUsers(
@@ -88,11 +80,7 @@ class NotificationService {
           },
         );
       }
-
-      print('✅ Notificaciones enviadas correctamente');
-    } catch (e) {
-      print('⚠️ Error al enviar notificaciones: $e');
-    }
+    } catch (__) {}
   }
 
   // Crea documento de notificación en Firestore
@@ -125,7 +113,6 @@ class NotificationService {
     });
   }
 
-  // Obtiene notificaciones del docente/tutor actual
   Stream<QuerySnapshot<Map<String, dynamic>>> obtenerNotificaciones() {
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid == null) {
@@ -140,7 +127,6 @@ class NotificationService {
         .snapshots();
   }
 
-  // Marca notificación como leída
   Future<void> marcarComoLeida(String notificacionId) async {
     await _db.collection('notificaciones').doc(notificacionId).update({
       'leida': true,
@@ -148,7 +134,6 @@ class NotificationService {
     });
   }
 
-  // Marca todas como leídas
   Future<void> marcarTodasComoLeidas() async {
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid == null) return;
@@ -170,7 +155,6 @@ class NotificationService {
     await batch.commit();
   }
 
-  // Elimina notificación
   Future<void> eliminarNotificacion(String notificacionId) async {
     await _db.collection('notificaciones').doc(notificacionId).delete();
   }
