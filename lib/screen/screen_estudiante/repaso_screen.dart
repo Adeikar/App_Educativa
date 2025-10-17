@@ -17,19 +17,12 @@ class RepasoScreen extends StatefulWidget {
   @override
   State<RepasoScreen> createState() => _RepasoScreenState();
 }
-
 class _RepasoScreenState extends State<RepasoScreen> with TickerProviderStateMixin {
-  // ============================================================
-  // SERVICIOS Y MOTORES PRINCIPALES
-  // ============================================================
   final ExerciseEngine _engine = ExerciseEngine();
   late final QLearningService _ql;
   final FlutterTts _flutterTts = FlutterTts();
   final SpeechToText _speechToText = SpeechToText();
 
-  // ============================================================
-  // VARIABLES DE Q-LEARNING Y ESTADO DEL EJERCICIO
-  // ============================================================
   Exercise? _ex;
   String _s = 'muy_basico';
   String _a = 'mantener-mantener_obj';
@@ -37,36 +30,24 @@ class _RepasoScreenState extends State<RepasoScreen> with TickerProviderStateMix
   int _objetivo = 2;
   int _objetivoPrime = 2;
 
-  // ============================================================
-  // VARIABLES DE PROGRESO Y ESTADÍSTICAS
-  // ============================================================
   int _idx = 0;
   int _aciertos = 0;
   int _errores = 0;
   final int _max = 10;
   late DateTime _inicio;
 
-  // ============================================================
-  // VARIABLES DE INTERACCIÓN Y UI
-  // ============================================================
   bool _bloqueado = false;
   int? _seleccion;
   bool _showOverlay = false;
   Color _overlayColor = Colors.transparent;
   bool _showCelebration = false;
-  
-  // ============================================================
-  // VARIABLES DE AUDIO INTERACTIVO
-  // ============================================================
+
   bool _modoAudioInteractivo = false;
   bool _isListening = false;
   bool _speechInitialized = false;
   String _recognizedText = '';
   bool _isSpeaking = false;
-  
-  // ============================================================
-  // CONTROLADORES DE ANIMACIONES
-  // ============================================================
+
   late AnimationController _progressController;
   late AnimationController _celebrationController;
   late AnimationController _shakeController;
@@ -85,9 +66,6 @@ class _RepasoScreenState extends State<RepasoScreen> with TickerProviderStateMix
     _cargarPrimero();
   }
 
-  // ============================================================
-  // CONFIGURACIÓN DE TEXTO A VOZ (TTS)
-  // ============================================================
   Future<void> _initializeTts() async {
     await _flutterTts.setLanguage("es-ES");
     
@@ -121,16 +99,12 @@ class _RepasoScreenState extends State<RepasoScreen> with TickerProviderStateMix
     });
   }
 
-  // ============================================================
-  // INICIALIZACIÓN DEL RECONOCIMIENTO DE VOZ
-  // ============================================================
   Future<void> _initializeSpeech() async {
     try {
       final status = await Permission.microphone.request();
       if (status.isGranted) {
         _speechInitialized = await _speechToText.initialize(
           onError: (error) {
-            print('Error de reconocimiento: $error');
             if (mounted) {
               setState(() => _isListening = false);
             }
@@ -142,24 +116,17 @@ class _RepasoScreenState extends State<RepasoScreen> with TickerProviderStateMix
             }
           },
           onStatus: (status) {
-            print('Estado STT: $status');
             if (status == 'done' || status == 'notListening') {
               if (mounted) {
                 setState(() => _isListening = false);
               }
-              // NO reiniciar aquí - el timer lo maneja
             }
           },
         );
       }
-    } catch (e) {
-      print('Error al inicializar speech: $e');
-    }
+    } catch (__) {}
   }
 
-  // ============================================================
-  // INICIALIZACIÓN DE ANIMACIONES
-  // ============================================================
   void _initializeAnimations() {
     _progressController = AnimationController(
       duration: const Duration(milliseconds: 800),
@@ -190,9 +157,6 @@ class _RepasoScreenState extends State<RepasoScreen> with TickerProviderStateMix
     );
   }
 
-  // ============================================================
-  // FUNCIÓN AUXILIAR PARA REPRODUCIR AUDIO - MEJORADA
-  // ============================================================
   Future<void> _speak(String text) async {
     if (text.isEmpty) return;
     
@@ -217,9 +181,7 @@ class _RepasoScreenState extends State<RepasoScreen> with TickerProviderStateMix
     setState(() => _isSpeaking = false);
   }
 
-  // ============================================================
-  // LEER OPCIONES Y ACTIVAR ESCUCHA
-  // ============================================================
+
   Future<void> _leerOpcionesYEscuchar() async {
     if (!_modoAudioInteractivo || _ex == null || _bloqueado) return;
 
@@ -245,27 +207,19 @@ class _RepasoScreenState extends State<RepasoScreen> with TickerProviderStateMix
     }
   }
 
-  // ============================================================
-  // INICIAR RECONOCIMIENTO DE VOZ
-  // ============================================================
   Future<void> _startListening() async {
     if (!_speechInitialized || _isListening || _bloqueado || _isSpeaking) {
-      print('No se puede escuchar: initialized=$_speechInitialized, listening=$_isListening, bloqueado=$_bloqueado, speaking=$_isSpeaking');
-      return;
+       return;
     }
-
-    print('Iniciando escucha...');
-    
     setState(() {
       _isListening = true;
       _recognizedText = '';
     });
 
-    // Timer para reiniciar cada 25 segundos (antes de que el SO corte)
+    // Timer para reiniciar cada 25 segundos
     Timer? restartTimer;
     restartTimer = Timer(const Duration(seconds: 25), () {
       if (_isListening && mounted && _modoAudioInteractivo && !_bloqueado) {
-        print('Reiniciando escucha por timeout del SO');
         _restartListening(restartTimer);
       }
     });
@@ -274,35 +228,29 @@ class _RepasoScreenState extends State<RepasoScreen> with TickerProviderStateMix
       await _speechToText.listen(
         onResult: (result) {
           if (!mounted) return;
-          
-          print('Resultado STT: ${result.recognizedWords} - final: ${result.finalResult}');
-          
+ 
           setState(() {
             _recognizedText = result.recognizedWords.toLowerCase();
           });
 
           if (result.finalResult && _recognizedText.isNotEmpty) {
-            restartTimer?.cancel(); // Cancelar timer si hay resultado
+            restartTimer?.cancel(); 
             _procesarRespuestaVoz(_recognizedText);
           }
         },
-        listenFor: const Duration(seconds: 30), // Máximo permitido por SO
-        pauseFor: const Duration(seconds: 5),   // Silencio corto
+        listenFor: const Duration(seconds: 30), 
+        pauseFor: const Duration(seconds: 5),  
         localeId: 'es_ES',
-        cancelOnError: false, // NO cancelar en errores
+        cancelOnError: false, 
         partialResults: true,
       );
-    } catch (e) {
-      print('Error al iniciar escucha: $e');
+    } catch (__) {
       restartTimer?.cancel();
       setState(() => _isListening = false);
       _restartListening(null);
     }
   }
 
-  // ============================================================
-  // REINICIAR ESCUCHA SUAVEMENTE
-  // ============================================================
   void _restartListening(Timer? previousTimer) {
     previousTimer?.cancel();
     
@@ -315,9 +263,6 @@ class _RepasoScreenState extends State<RepasoScreen> with TickerProviderStateMix
     }
   }
 
-  // ============================================================
-  // DETENER RECONOCIMIENTO DE VOZ
-  // ============================================================
   Future<void> _stopListening() async {
     if (_speechToText.isListening) {
       await _speechToText.stop();
@@ -330,13 +275,8 @@ class _RepasoScreenState extends State<RepasoScreen> with TickerProviderStateMix
     }
   }
 
-  // ============================================================
-  // PROCESAR LA RESPUESTA DADA POR VOZ
-  // ============================================================
   Future<void> _procesarRespuestaVoz(String texto) async {
     if (_ex == null || _bloqueado) return;
-
-    print('Procesando respuesta de voz: "$texto"');
 
     int? respuesta;
 
@@ -359,8 +299,7 @@ class _RepasoScreenState extends State<RepasoScreen> with TickerProviderStateMix
       'cuarenta y cinco': 45, 'cuarentaycinco': 45, 'cuarenta y seis': 46, 'cuarentayseis': 46,
       'cuarenta y siete': 47, 'cuarentaysiete': 47, 'cuarenta y ocho': 48, 'cuarentayocho': 48,
       'cuarenta y nueve': 49, 'cuarentaynueve': 49, 'cincuenta': 50,
-      // Agregar más si es necesario, hasta 100 por ejemplo
-      'cincuenta y uno': 51, 'cincuentayuno': 51, /* ... continuar si hace falta */
+      'cincuenta y uno': 51, 'cincuentayuno': 51, 
     };
 
     for (var opcion in _ex!.opciones) {
@@ -384,10 +323,8 @@ class _RepasoScreenState extends State<RepasoScreen> with TickerProviderStateMix
     await _stopListening();
 
     if (respuesta != null) {
-      print('Respuesta reconocida: $respuesta');
       await _contestar(respuesta);
     } else {
-      print('No se reconoció respuesta válida');
       await _speak("No entendí tu respuesta. Intenta de nuevo.");
       await Future.delayed(const Duration(milliseconds: 2000));
       
@@ -397,9 +334,6 @@ class _RepasoScreenState extends State<RepasoScreen> with TickerProviderStateMix
     }
   }
 
-  // ============================================================
-  // CARGA INICIAL
-  // ============================================================
   Future<void> _cargarPrimero() async {
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid == null) {
@@ -421,9 +355,6 @@ class _RepasoScreenState extends State<RepasoScreen> with TickerProviderStateMix
     await _planificarYSometerSiguiente(uid);
   }
 
-  // ============================================================
-  // PLANIFICAR ACCIÓN
-  // ============================================================
   Future<void> _planificarYSometerSiguiente(String uid) async {
     _a = await _ql.pickAction(uid, widget.tema, _s, _objetivo);
     
@@ -434,9 +365,6 @@ class _RepasoScreenState extends State<RepasoScreen> with TickerProviderStateMix
     await _cargarEjercicio(_sPrime, accion: _a);
   }
 
-  // ============================================================
-  // CARGAR Y MOSTRAR NUEVO EJERCICIO
-  // ============================================================
   Future<void> _cargarEjercicio(String nivel, {required String accion}) async {
     await _stopListening();
     await _flutterTts.stop();
@@ -468,9 +396,6 @@ class _RepasoScreenState extends State<RepasoScreen> with TickerProviderStateMix
     }
   }
 
-  // ============================================================
-  // PROCESAR RESPUESTA
-  // ============================================================
   Future<void> _contestar(int valor) async {
     if (_bloqueado || _ex == null) return;
 
@@ -560,9 +485,6 @@ class _RepasoScreenState extends State<RepasoScreen> with TickerProviderStateMix
     }
   }
 
-  // ============================================================
-  // GUARDAR CONTADOR DE ACCIONES
-  // ============================================================
   Future<void> _guardarContadorAccion(String uid) async {
     final doc = await FirebaseFirestore.instance
         .collection('usuarios')
@@ -589,9 +511,6 @@ class _RepasoScreenState extends State<RepasoScreen> with TickerProviderStateMix
     }, SetOptions(merge: true));
   }
 
-  // ============================================================
-  // AVANZAR AL SIGUIENTE EJERCICIO
-  // ============================================================
   Future<void> _siguiente() async {
     setState(() => _idx++);
 
@@ -620,9 +539,6 @@ class _RepasoScreenState extends State<RepasoScreen> with TickerProviderStateMix
     }
   }
 
-  // ============================================================
-  // GUARDAR SESIÓN Y MOSTRAR RESUMEN
-  // ============================================================
   Future<void> _guardarSesionYMostrarResumen() async {
     await _stopListening();
     await _flutterTts.stop();
@@ -683,9 +599,7 @@ class _RepasoScreenState extends State<RepasoScreen> with TickerProviderStateMix
     );
   }
 
-  // ============================================================
-  // DIÁLOGO DE RESUMEN
-  // ============================================================
+
   Widget _buildSummaryDialog(int min, int seg, int porcentaje) {
     final temaConfig = _getTemaConfig(widget.tema);
     

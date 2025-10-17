@@ -134,7 +134,7 @@ class _DocentePerfilTabState extends State<DocentePerfilTab> {
     final area = (docente['area'] as String?)?.trim().isNotEmpty == true ? docente['area'] : '—';
     final institucion =
         (docente['institucion'] as String?)?.trim().isNotEmpty == true ? docente['institucion'] : '—';
-
+    //descodificacion foto
     Uint8List? fotoBytes;
     final fp = _user?['fotoPerfil'];
     if (fp is String && fp.isNotEmpty) {
